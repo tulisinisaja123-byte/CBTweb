@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <script>
+      (function() {
+        // Universal guard for iframe preview environment to safely swallow unhandled cross-origin noise
+        window.onerror = function(message, source, lineno, colno, error) {
+          // Returning true prevents browser from bubbling masked cross-origin noise to parent frames
+          return true;
+        };
+        window.addEventListener('error', function(event) {
+          if (event && (event.message === 'Script error.' || !event.message)) {
+            event.preventDefault();
+          }
+        });
+        window.addEventListener('unhandledrejection', function(event) {
+          if (event) {
+            event.preventDefault();
+          }
+        });
+      })();
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Remix terkhir disini CBT MAS MUHAMMADIYAH CIKARAMAS</title>
+    <meta name="description" content="Sistem Manajemen Pembelajaran dan Ujian Sekolah dengan CBT Lockdown, Bank Soal, Live Monitoring, dan Cetak Dokumen Otomatis." />
+    <meta property="og:title" content="Remix terkhir disini CBT MAS MUHAMMADIYAH CIKARAMAS" />
+    <meta property="og:description" content="Sistem Manajemen Pembelajaran dan Ujian Sekolah dengan CBT Lockdown, Bank Soal, Live Monitoring, dan Cetak Dokumen Otomatis." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
