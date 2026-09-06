@@ -10,9 +10,10 @@ import {
   ShieldCheck,
   ShieldAlert,
   Calendar,
-  AlertCircle
+  AlertCircle,
+  Lock
 } from 'lucide-react';
-import { getStudentAttendanceForUser } from '../services/lmsStorage';
+import { getStudentAttendanceForUser, calculateEndTime } from '../services/lmsStorage';
 import { getAvailableExams } from '../services/supabaseLmsStorage';
 import { AvailableExamItem, User, StudentAttendanceRecord } from '../types';
 import { ExamStartConfirmationModal } from './ExamStartConfirmationModal';
@@ -81,9 +82,16 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({ token, curre
         return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#E6F4EA] text-[#137333] border border-[#CEEAD6]">Selesai</span>;
       case 'REVIEW':
         return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#FEF7E0] text-[#B06000] border border-[#FEEFC3]">Menunggu Koreksi</span>;
-      case 'ACTIVE':
-        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#E6F4EA] text-[#137333] border border-[#CEEAD6]">Aktif</span>;
       default:
+        if (exam.timingStatus === 'EXPIRED') {
+          return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">Sesi Berakhir</span>;
+        }
+        if (exam.timingStatus === 'UPCOMING') {
+          return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">Belum Dibuka</span>;
+        }
+        if (status === 'ACTIVE') {
+          return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#E6F4EA] text-[#137333] border border-[#CEEAD6]">Sesi Aktif</span>;
+        }
         return <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#F1F3F5] text-[#495057] border border-[#DEE2E6]">{status}</span>;
     }
   };
@@ -179,7 +187,7 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({ token, curre
                     <div className="flex items-center gap-1.5">
                       <Clock className="w-3.5 h-3.5 text-[#0052CC]" />
                       <span>
-                        Waktu: <b className="text-[#1A1C1E] font-medium">{exam.startTime} WIB</b> • Durasi:{' '}
+                        Waktu Sesi: <b className="text-[#1A1C1E] font-semibold">{exam.startTime} s.d. {exam.endTime || calculateEndTime(exam.startTime, exam.duration)} WIB</b> • Durasi:{' '}
                         <b className="text-[#1A1C1E] font-medium">{exam.duration} menit</b>
                       </span>
                     </div>
@@ -225,12 +233,36 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({ token, curre
                     <QrCode className="w-4 h-4 text-amber-300" />
                     <span>Scan Barcode Presensi Sekolah</span>
                   </button>
-                ) : (
+                ) : (exam.status === 'SUBMITTED' || exam.status === 'FINISHED' || exam.status === 'REVIEW') ? (
                   <div className="w-full flex items-center justify-between text-xs py-1">
                     <span className="text-[#6C757D]">Nilai Anda:</span>
                     <span className="text-base font-bold font-mono text-[#0052CC]">
                       {exam.score !== '' ? `${exam.score} Poin` : 'Menunggu Koreksi'}
                     </span>
+                  </div>
+                ) : exam.timingStatus === 'UPCOMING' ? (
+                  <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-center space-y-1">
+                    <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-amber-900">
+                      <Lock className="w-3.5 h-3.5 text-amber-700" />
+                      <span>Sesi Belum Dibuka</span>
+                    </div>
+                    <div className="text-[11px] text-amber-800">
+                      Akses pengerjaan dibuka pukul <b>{exam.startTime} s.d. {exam.endTime || calculateEndTime(exam.startTime, exam.duration)} WIB</b>.
+                    </div>
+                  </div>
+                ) : exam.timingStatus === 'EXPIRED' ? (
+                  <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-center space-y-1">
+                    <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-rose-800">
+                      <Lock className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Batas Waktu Sesi Berakhir</span>
+                    </div>
+                    <div className="text-[11px] text-rose-700">
+                      Sesi ujian telah selesai pukul <b>{exam.endTime || calculateEndTime(exam.startTime, exam.duration)} WIB</b>. Akses otomatis ditutup.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="w-full text-center text-xs text-slate-500 py-1 font-medium">
+                    Ujian tidak aktif atau belum dijadwalkan
                   </div>
                 )}
               </div>

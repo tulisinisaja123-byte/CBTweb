@@ -18,6 +18,7 @@ import {
   MA_CIKARAMAS_TIMETABLE_6DAYS
 } from '../data/curriculumData';
 import { MasterTimetableDocument } from './MasterTimetableDocument';
+import { getDocumentStyles, printElementReliable, formatDocumentSemester } from '../utils/printHelper';
 
 interface TimetablePrintModalProps {
   isOpen: boolean;
@@ -58,6 +59,7 @@ export const TimetablePrintModal: React.FC<TimetablePrintModalProps> = ({
 
   const schoolName = settings?.SCHOOL_NAME || 'MA MUHAMMADIYAH CIKARAMAS';
   const academicYear = settings?.SCHOOL_YEAR || '2026/2027';
+  const cleanSemester = formatDocumentSemester(settings?.SEMESTER);
 
   // Build standalone clean HTML for print iframe, new tab, and download
   const generateCleanPrintHtml = () => {
@@ -66,56 +68,92 @@ export const TimetablePrintModal: React.FC<TimetablePrintModalProps> = ({
       paperSize === 'F4'
         ? '330mm 215mm'
         : '297mm 210mm'; // A4 Landscape exact dimensions
+    const injectedStyles = getDocumentStyles();
 
     return `<!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="utf-8">
-  <title>Jadwal Pelajaran Tatap Muka (${workDays} Hari Kerja) - ${schoolName}</title>
+  <title>Jadwal Pelajaran Tatap Muka Semester ${cleanSemester} (${workDays} Hari Kerja) - ${schoolName}</title>
+  ${injectedStyles}
   <style>
     @page {
       size: ${sizeRule};
       margin: 4mm 5mm 4mm 5mm;
     }
     * {
-      box-sizing: border-box;
+      box-sizing: border-box !important;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
     }
     html, body {
-      margin: 0;
-      padding: 0;
-      background: #ffffff;
-      color: #000000;
-      font-family: Arial, Helvetica, sans-serif;
-      font-size: ${fontSize};
+      margin: 0 !important;
+      padding: 0 !important;
+      background: #ffffff !important;
+      color: #000000 !important;
+      font-family: Arial, Helvetica, sans-serif !important;
+      font-size: ${fontSize} !important;
       line-height: 1.15;
+      width: 100% !important;
     }
     .no-print {
       display: none !important;
     }
+    
+    /* Strict Layout Rules for Master Timetable */
+    .master-document-root {
+      width: 100% !important;
+      max-width: 100% !important;
+      margin: 0 auto !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+    .flex { display: flex !important; }
+    .inline-flex { display: inline-flex !important; }
+    .flex-row { flex-direction: row !important; }
+    .flex-col { flex-direction: column !important; }
+    .items-start { align-items: flex-start !important; }
+    .items-center { align-items: center !important; }
+    .items-stretch { align-items: stretch !important; }
+    .justify-between { justify-content: space-between !important; }
+    .justify-center { justify-content: center !important; }
+    .flex-1 { flex: 1 1 0% !important; min-width: 0 !important; }
+    .shrink-0 { flex-shrink: 0 !important; }
+    .grow { flex-grow: 1 !important; }
+    .w-full { width: 100% !important; }
+    .overflow-x-auto { overflow-x: visible !important; }
+
+    /* Tables */
     table {
-      border-collapse: collapse;
-      width: 100%;
-      border: 1.5px solid #000000;
-      page-break-inside: avoid;
+      border-collapse: collapse !important;
+      width: 100% !important;
+      border: 1px solid #000000 !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+      font-size: ${fontSize} !important;
     }
     th, td {
-      border: 1px solid #000000;
-      padding: 1px 1.5px;
-      vertical-align: middle;
-      color: #000000;
+      border: 1px solid #000000 !important;
+      padding: 1px 1.5px !important;
+      vertical-align: middle !important;
+      color: #000000 !important;
     }
     th {
       background-color: #f2f2f2 !important;
-      font-weight: bold;
+      font-weight: bold !important;
     }
-    .master-document-root {
-      width: 100%;
-      max-width: 100%;
-      margin: 0 auto;
-      page-break-inside: avoid;
-    }
+
+    /* Background colors preservation */
+    .bg-gray-50 { background-color: #f9fafb !important; }
+    .bg-gray-100 { background-color: #f3f4f6 !important; }
+    .bg-gray-200 { background-color: #e5e7eb !important; }
+    .bg-yellow-50\\/70, .bg-yellow-50 { background-color: #fefce8 !important; }
+    .bg-green-50\\/70, .bg-green-50 { background-color: #f0fdf4 !important; }
+    .bg-orange-50\\/80, .bg-orange-50 { background-color: #fff7ed !important; }
+    .bg-blue-50\\/70, .bg-blue-50 { background-color: #eff6ff !important; }
+    .bg-emerald-50 { background-color: #ecfdf5 !important; }
+    .bg-amber-100\\/70, .bg-amber-100 { background-color: #fef3c7 !important; }
+
     /* Sticky Top Bar for New Tab Preview */
     .sticky-bar {
       position: sticky;
@@ -153,16 +191,22 @@ export const TimetablePrintModal: React.FC<TimetablePrintModalProps> = ({
       font-size: 12px;
       margin-left: 8px;
     }
+    .print-sheet-wrapper {
+      padding: 2mm 3mm;
+      box-sizing: border-box;
+      width: 100%;
+    }
     @media print {
-      .sticky-bar { display: none !important; }
+      .sticky-bar, .no-print { display: none !important; }
       body { margin: 0 !important; padding: 0 !important; }
+      .print-sheet-wrapper { padding: 0 !important; }
     }
   </style>
 </head>
 <body>
   <div class="sticky-bar no-print">
     <div>
-      <b>Jadwal Pelajaran Tatap Muka - MA Muhammadiyah Cikaramas</b>
+      <b>Jadwal Pelajaran Tatap Muka Semester ${cleanSemester} - ${schoolName}</b>
       <span style="opacity:0.8; margin-left:12px; font-size:11px;">
         (Format Memanjang 1 Lembar Pas ${paperSize} Landscape - ${workDays} Hari Kerja)
       </span>
@@ -172,21 +216,21 @@ export const TimetablePrintModal: React.FC<TimetablePrintModalProps> = ({
       <button class="btn-action-close" onclick="window.close()">Tutup Tab</button>
     </div>
   </div>
-  <div style="padding: 2mm 3mm;">
+  <div class="print-sheet-wrapper">
     ${printContent}
   </div>
   <script>
     window.addEventListener('load', function() {
       setTimeout(function() {
         window.print();
-      }, 400);
+      }, 450);
     });
   </script>
 </body>
 </html>`;
   };
 
-  // Print via isolated hidden iframe
+  // Print via isolated hidden iframe or fallback
   const handlePrintIframe = () => {
     onShowToast?.('Mempersiapkan lembar cetak...');
     try {
@@ -418,13 +462,14 @@ export const TimetablePrintModal: React.FC<TimetablePrintModalProps> = ({
               transition: 'transform 0.15s ease-out'
             }}
           >
-            {/* Paper Sheet Preview container representing actual A4 Landscape ratio */}
+            {/* Paper Sheet Preview container representing actual A4/F4 Landscape ratio */}
             <div
               className="bg-white text-black shadow-2xl p-4 sm:p-5 border border-slate-300 transition-all rounded-xs"
               style={{
-                width: '1150px',
+                width: paperSize === 'F4' ? '1220px' : '1120px',
                 minHeight: '790px',
-                margin: '0 auto'
+                margin: '0 auto',
+                boxSizing: 'border-box'
               }}
             >
               <div ref={printAreaRef}>

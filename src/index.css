@@ -160,8 +160,44 @@
   .items-start {
     align-items: flex-start !important;
   }
+  .items-center {
+    align-items: center !important;
+  }
+  .justify-between {
+    justify-content: space-between !important;
+  }
+  .gap-1 {
+    gap: 4px !important;
+  }
+  .gap-1\.5 {
+    gap: 6px !important;
+  }
   .gap-2 {
     gap: 8px !important;
+  }
+  .gap-2\.5 {
+    gap: 10px !important;
+  }
+  .gap-3 {
+    gap: 12px !important;
+  }
+  .gap-4 {
+    gap: 16px !important;
+  }
+  .w-8 {
+    width: 32px !important;
+  }
+  .h-8 {
+    height: 32px !important;
+  }
+  .w-9 {
+    width: 36px !important;
+  }
+  .h-9 {
+    height: 36px !important;
+  }
+  .mr-2\.5 {
+    margin-right: 10px !important;
   }
   .rich-content p {
     margin: 0 !important;

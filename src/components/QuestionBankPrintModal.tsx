@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Printer,
   X,
@@ -28,6 +28,7 @@ import { SchoolSettings } from '../types';
 import { RichContentRenderer } from './RichContentRenderer';
 import { parseMatchingDetails, parseMatchingAnswer } from '../utils/matchingHelper';
 import { downloadExamPaperDocx, downloadExamPaperDoc, ExamDocxExportOptions } from '../utils/wordTemplates';
+import { formatDocumentSemester } from '../utils/printHelper';
 
 interface QuestionBankPrintModalProps {
   isOpen: boolean;
@@ -86,12 +87,20 @@ export const QuestionBankPrintModal: React.FC<QuestionBankPrintModalProps> = ({
     });
   });
   const [academicYear, setAcademicYear] = useState<string>(settings?.SCHOOL_YEAR || '2026/2027');
-  const [academicSemester, setAcademicSemester] = useState<string>(settings?.SEMESTER || 'Ganjil');
+  const [academicSemester, setAcademicSemester] = useState<string>(settings?.SEMESTER || '1 (Ganjil)');
   const [docCode, setDocCode] = useState<string>(() => {
     const cleanSub = (subjectName || 'MAPEL').substring(0, 4).toUpperCase();
     const cleanCls = (targetClassName || 'KLS').replace(/\s+/g, '').toUpperCase();
     return `NS/${cleanSub}/${cleanCls}/${new Date().getFullYear()}`;
   });
+
+  // Sync settings when props update
+  useEffect(() => {
+    if (settings) {
+      if (settings.SCHOOL_YEAR) setAcademicYear(settings.SCHOOL_YEAR);
+      if (settings.SEMESTER) setAcademicSemester(settings.SEMESTER);
+    }
+  }, [settings]);
 
   // --- PEJABAT PENGESAHAN ---
   const [principalTitle, setPrincipalTitle] = useState<string>(settings?.PRINCIPAL_TITLE || 'Kepala Madrasah');
@@ -936,7 +945,7 @@ export const QuestionBankPrintModal: React.FC<QuestionBankPrintModalProps> = ({
               NASKAH SOAL {assessmentTypeName || 'PENILAIAN / ASESMEN AKHIR'}
             </h2>
             <div className="text-xs sm:text-[11pt] font-semibold mt-0.5" style={{ fontWeight: 600, marginTop: '2px' }}>
-              TAHUN PELAJARAN {academicYear} — SEMESTER {academicSemester.toUpperCase()}
+              TAHUN PELAJARAN {academicYear} — SEMESTER {formatDocumentSemester(academicSemester)}
             </div>
           </div>
 

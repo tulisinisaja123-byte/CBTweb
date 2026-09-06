@@ -18,7 +18,7 @@ import {
   getSchoolSettings,
   subscribeToRealtimeChanges
 } from './services/supabaseLmsStorage';
-import { User, SchoolSettings, DashboardData, Exam, AssessmentType } from './types';
+import { User, SchoolSettings, DashboardData, Exam, AssessmentType, Question } from './types';
 import { Settings, Loader2, Database } from 'lucide-react';
 import { LoginView } from './components/LoginView';
 import { Sidebar } from './components/Sidebar';
@@ -82,8 +82,9 @@ export default function App() {
     allSubjects?: any[];
     exams: Exam[];
     allExams?: Exam[];
+    questions?: Question[];
     assessmentTypes: AssessmentType[];
-  }>({ users: [], classes: [], subjects: [], exams: [], assessmentTypes: [] });
+  }>({ users: [], classes: [], subjects: [], exams: [], questions: [], assessmentTypes: [] });
 
   const [entityRows, setEntityRows] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
@@ -547,6 +548,7 @@ export default function App() {
                       classNameHelper={classNameHelper}
                       onNavigate={handleNavigate}
                       onStartExam={handleStartExam}
+                      settings={settings}
                       onRefresh={() => {
                         if (token) {
                           restoreSession(token)
@@ -665,6 +667,7 @@ export default function App() {
           {(currentPage === 'exams' || currentPage === 'cbtSchedules') && (
             <CbtExamScheduleManager
               token={token}
+              settings={settings}
               exams={
                 (currentPage === 'exams' || currentPage === 'cbtSchedules') && Array.isArray(entityRows) && entityRows.length > 0 && (entityRows[0]?.EXAM_DATE !== undefined || entityRows[0]?.SUBJECT_ID !== undefined)
                   ? entityRows
@@ -761,6 +764,7 @@ export default function App() {
               users={lookup.users}
               classes={lookup.classes}
               currentUser={user}
+              questions={lookup.questions}
               isStudentOnly={false}
               token={token}
               onRefresh={async () => {
@@ -823,6 +827,7 @@ export default function App() {
                 token={token}
                 initialSettings={settings}
                 onSettingsSaved={newSettings => setSettings(newSettings)}
+                onOpenAppsScript={() => setIsAppsScriptModalOpen(true)}
                 onOpenSupabaseRls={() => setIsSupabaseRlsModalOpen(true)}
                 onOpenMigration={() => handleNavigate('migration')}
               />

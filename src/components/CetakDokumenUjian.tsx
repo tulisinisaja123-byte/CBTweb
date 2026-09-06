@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Printer,
   CreditCard,
@@ -21,10 +21,15 @@ import {
   Check,
   FileCheck2,
   FileSpreadsheet,
-  Edit3
+  Edit3,
+  Image as ImageIcon
 } from 'lucide-react';
 import { Exam, PrintData, ClassItem, AssessmentType, SchoolSettings, User } from '../types';
-import { getPrintData, getStudentCardsPrintData, getClasses, getAssessmentTypes, matchClassFlexible } from '../services/lmsStorage';
+import { getPrintData, getStudentCardsPrintData, getClasses, getAssessmentTypes, matchClassFlexible, getSchoolSettings as getLocalSchoolSettings } from '../services/lmsStorage';
+import { DEFAULT_SETTINGS } from '../data/initialData';
+import { printElementReliable } from '../utils/printHelper';
+import { MaCikaramasLogoSvg, MuhammadiyahLogoSvg } from './OfficialLogos';
+import { OfficialKopSurat } from './OfficialKopSurat';
 
 // =========================================================================
 // VECTOR SVG DUMMY QR CODE GENERATOR (VECTOR SHARP IN PRINT)
@@ -223,14 +228,12 @@ export function formatCleanSemester(raw?: string): string {
   let s = raw.trim();
   // Strip redundant leading "semester" case-insensitively
   s = s.replace(/^semester\s+/i, '').trim();
-  if (s.includes('1 & 2') || s.includes('1-2') || s.includes('1 dan 2')) {
-    return 'Semester Ganjil (1)';
+  if (!s) return 'Semester Ganjil';
+  if (s === '1' || s.toLowerCase().includes('ganjil')) {
+    return 'Semester Ganjil';
   }
-  if (s.toLowerCase() === 'ganjil' || s === '1' || s.toLowerCase() === 'smt 1') {
-    return 'Semester Ganjil (1)';
-  }
-  if (s.toLowerCase() === 'genap' || s === '2' || s.toLowerCase() === 'smt 2') {
-    return 'Semester Genap (2)';
+  if (s === '2' || s.toLowerCase().includes('genap')) {
+    return 'Semester Genap';
   }
   return `Semester ${s}`;
 }
@@ -275,6 +278,24 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
 
   // Card Grid Layout Configuration: 4 Cards (2x2) or 6 Cards (2x3) or Full with Schedule
   const [cardGridMode, setCardGridMode] = useState<'GRID_4' | 'GRID_6' | 'WITH_SCHEDULE'>('GRID_4');
+  const [includeLogo, setIncludeLogo] = useState<boolean>(true);
+  const printableRef = useRef<HTMLDivElement>(null);
+
+  // Active School Settings loaded directly from storage or props
+  const [activeSettings, setActiveSettings] = useState<SchoolSettings>(() => {
+    return propSettings || getLocalSchoolSettings();
+  });
+
+  useEffect(() => {
+    if (propSettings) {
+      setActiveSettings(propSettings);
+    } else {
+      const current = getLocalSchoolSettings();
+      if (current) {
+        setActiveSettings(current);
+      }
+    }
+  }, [propSettings]);
 
   // Loaded Data State
   const [printData, setPrintData] = useState<PrintData | null>(null);
@@ -340,7 +361,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
         overrideUsers: propUsers,
         overrideClasses: classesList.length > 0 ? classesList : propClasses,
         overrideSubjects: propSubjects,
-        overrideSettings: propSettings,
+        overrideSettings: activeSettings || propSettings,
         overrideExams: exams
       };
 
@@ -367,13 +388,27 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
     }
   };
 
-  // Re-generate data automatically whenever filters, props or docType changes
+  // Re-generate data automatically whenever filters, props, active settings or docType changes
   useEffect(() => {
     handleGenerateData();
-  }, [exams, propUsers, propClasses, propSubjects, propSettings, docType, selectedExamId, selectedClassId, selectedAssessmentTypeId, classesList]);
+  }, [exams, propUsers, propClasses, propSubjects, propSettings, activeSettings, docType, selectedExamId, selectedClassId, selectedAssessmentTypeId, classesList]);
 
-  // Native window.print() handler
+  // Reliable print handler (supports iframe sandbox and direct print)
   const handlePrint = () => {
+    if (printableRef.current) {
+      const docTitle = docType === 'cards'
+        ? `Kartu_Peserta_${schoolSettings.SCHOOL_NAME || 'CBT'}`
+        : docType === 'minutes'
+        ? `Berita_Acara_${schoolSettings.SCHOOL_NAME || 'CBT'}`
+        : `Daftar_Hadir_${schoolSettings.SCHOOL_NAME || 'CBT'}`;
+
+      const ok = printElementReliable(printableRef.current, {
+        title: docTitle,
+        paperSize: 'A4',
+        orientation: 'portrait'
+      });
+      if (ok) return;
+    }
     try {
       window.print();
     } catch (err) {
@@ -469,18 +504,20 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
     return Array.from(sessions);
   }, [printData]);
 
-  // School Settings default fallback
-  const schoolSettings: SchoolSettings = printData?.settings || {
-    SCHOOL_NAME: 'MAS MUHAMMADIYAH CIKARAMAS',
-    SCHOOL_ADDRESS: 'Jl. Raya Cikaramas - Wado No. 12, Tanjungmedar, Sumedang 45354',
-    SCHOOL_PHONE: '(0261) 882190',
-    SCHOOL_CITY: 'Sumedang',
-    SCHOOL_YEAR: '2026/2027',
-    SEMESTER: '1 (Ganjil)',
-    PRINCIPAL_NAME: 'Ai Sukaesih, S.Pd',
-    PRINCIPAL_TITLE: 'Kepala Madrasah',
-    PRINCIPAL_NIP: '1281201'
-  };
+  // School Settings: dynamically resolved from active settings, printData, or defaults
+  const schoolSettings: SchoolSettings = useMemo(() => {
+    const base = getLocalSchoolSettings();
+    return {
+      ...DEFAULT_SETTINGS,
+      ...base,
+      ...(activeSettings || {}),
+      ...(printData?.settings || {}),
+      ...(propSettings || {})
+    };
+  }, [activeSettings, printData?.settings, propSettings]);
+
+  // Active School Year strictly resolved from settings (guaranteed non-empty)
+  const schoolYear = schoolSettings.SCHOOL_YEAR || activeSettings?.SCHOOL_YEAR || DEFAULT_SETTINGS.SCHOOL_YEAR || '2026/2027';
 
   // Clean, professional semester label without duplicated "Semester SEMESTER"
   const cleanSemesterLabel = useMemo(() => {
@@ -509,8 +546,8 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
     if (rawTitle && !rawTitle.toLowerCase().includes('bank soal')) {
       return rawTitle;
     }
-    return 'Sumatif Akhir Semester (SAS)';
-  }, [selectedAssessmentTypeId, printData?.exam, assessmentTypesList]);
+    return schoolSettings.DEFAULT_ASSESSMENT_NAME || schoolSettings.ASSESSMENT_TITLE || 'Sumatif Akhir Semester (SAS)';
+  }, [selectedAssessmentTypeId, printData?.exam, assessmentTypesList, schoolSettings]);
 
   // Group students by class/rombel for separated presentation and printing
   const studentsByClass = useMemo(() => {
@@ -637,14 +674,14 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-[#E9ECEF]">
           <div>
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-[#0052CC] text-white flex items-center justify-center font-bold text-xs shadow-xs">
+              <div className="w-8 h-8 rounded-lg bg-emerald-700 text-white flex items-center justify-center font-bold text-xs shadow-xs">
                 CBT
               </div>
-              <h1 className="text-xl sm:text-2xl font-bold text-[#1A1C1E] tracking-tight">
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
                 Cetak Dokumen Ujian CBT
               </h1>
             </div>
-            <p className="text-xs text-[#6C757D] mt-1">
+            <p className="text-xs text-slate-500 mt-1">
               MAS MUHAMMADIYAH CIKARAMAS • Fasilitas cetak resmi Kartu Peserta (Grid 4–6), Berita Acara, & Daftar Hadir Ujian.
             </p>
           </div>
@@ -654,24 +691,24 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
               type="button"
               onClick={handlePrint}
               disabled={!printData || filteredStudents.length === 0}
-              className="px-4 py-2 rounded-xl bg-[#0052CC] hover:bg-[#0047B3] disabled:opacity-50 text-white font-bold text-xs shadow-xs flex items-center gap-2 transition-all cursor-pointer"
+              className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white font-bold text-xs shadow-xs flex items-center gap-2 transition-all cursor-pointer"
             >
               <Printer className="w-4 h-4 text-white" />
-              <span>Cetak / Simpan PDF (Ctrl+P)</span>
+              <span>Cetak / Simpan PDF</span>
             </button>
           </div>
         </div>
 
         {/* Error Alert */}
         {errorMessage && (
-          <div className="p-3.5 rounded-xl bg-[#FCE8E6] border border-[#F5C2C7] text-xs text-[#DC3545] flex items-center gap-2">
+          <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{errorMessage}</span>
           </div>
         )}
 
         {/* Navigation Tabs for Document Type */}
-        <div className="flex flex-wrap items-center gap-2 p-1.5 bg-[#F1F3F5] rounded-xl border border-[#DEE2E6]">
+        <div className="flex flex-wrap items-center gap-2 p-1.5 bg-slate-100 rounded-xl border border-slate-200">
           <button
             type="button"
             onClick={() => {
@@ -680,8 +717,8 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
             }}
             className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
               docType === 'cards'
-                ? 'bg-white text-[#0052CC] shadow-xs border border-[#CED4DA]'
-                : 'text-[#495057] hover:text-[#1A1C1E]'
+                ? 'bg-white text-emerald-800 shadow-xs border border-slate-300'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <CreditCard className="w-4 h-4" />
@@ -698,8 +735,8 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                 }}
                 className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
                   docType === 'minutes'
-                    ? 'bg-white text-[#0052CC] shadow-xs border border-[#CED4DA]'
-                    : 'text-[#495057] hover:text-[#1A1C1E]'
+                    ? 'bg-white text-emerald-800 shadow-xs border border-slate-300'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <FileCheck2 className="w-4 h-4" />
@@ -714,8 +751,8 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                 }}
                 className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
                   docType === 'attendance'
-                    ? 'bg-white text-[#0052CC] shadow-xs border border-[#CED4DA]'
-                    : 'text-[#495057] hover:text-[#1A1C1E]'
+                    ? 'bg-white text-emerald-800 shadow-xs border border-slate-300'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <ClipboardList className="w-4 h-4" />
@@ -739,7 +776,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                   setSelectedClassId(e.target.value);
                   setPrintData(null);
                 }}
-                className="w-full px-3 py-2 text-xs border border-[#CED4DA] rounded-lg bg-white text-[#1A1C1E] outline-none focus:border-[#0052CC]"
+                className="w-full px-3 py-2 text-xs border border-[#CED4DA] rounded-lg bg-white text-[#1A1C1E] outline-none focus:border-emerald-600"
               >
                 <option value="ALL">Semua Kelas (Massal)</option>
                 {classesList.map(c => (
@@ -761,7 +798,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                   setSelectedExamId(e.target.value);
                   setPrintData(null);
                 }}
-                className="w-full px-3 py-2 text-xs border border-[#CED4DA] rounded-lg bg-white text-[#1A1C1E] outline-none focus:border-[#0052CC]"
+                className="w-full px-3 py-2 text-xs border border-[#CED4DA] rounded-lg bg-white text-[#1A1C1E] outline-none focus:border-emerald-600"
               >
                 {exams.map(e => (
                   <option key={e.ID} value={e.ID}>
@@ -780,7 +817,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                 <select
                   value={cardGridMode}
                   onChange={e => setCardGridMode(e.target.value as any)}
-                  className="w-full px-3 py-2 text-xs border border-[#CED4DA] rounded-lg bg-white text-[#1A1C1E] font-semibold outline-none focus:border-[#0052CC]"
+                  className="w-full px-3 py-2 text-xs border border-[#CED4DA] rounded-lg bg-white text-[#1A1C1E] font-semibold outline-none focus:border-emerald-600"
                 >
                   <option value="GRID_4">Grid 4 Kartu / Halaman A4 (2x2 - Rekomendasi)</option>
                   <option value="GRID_6">Grid 6 Kartu / Halaman A4 (2x3 - Hemat Kertas)</option>
@@ -795,7 +832,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                 <select
                   value={selectedRoom}
                   onChange={e => setSelectedRoom(e.target.value)}
-                  className="w-full px-3 py-2 text-xs border border-[#CED4DA] rounded-lg bg-white text-[#1A1C1E] outline-none focus:border-[#0052CC]"
+                  className="w-full px-3 py-2 text-xs border border-[#CED4DA] rounded-lg bg-white text-[#1A1C1E] outline-none focus:border-emerald-600"
                 >
                   <option value="ALL">Semua Ruang</option>
                   {availableRooms.map(r => (
@@ -815,7 +852,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
               <select
                 value={selectedSession}
                 onChange={e => setSelectedSession(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-[#CED4DA] rounded-lg bg-white text-[#1A1C1E] outline-none focus:border-[#0052CC]"
+                className="w-full px-3 py-2 text-xs border border-[#CED4DA] rounded-lg bg-white text-[#1A1C1E] outline-none focus:border-emerald-600"
               >
                 <option value="ALL">Semua Sesi</option>
                 {availableSessions.map(s => (
@@ -828,7 +865,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#E9ECEF]">
-            <div className="text-xs text-[#6C757D] flex items-center gap-2">
+            <div className="text-xs text-slate-600 flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
               <span>
                 Total Terbaca: <b>{filteredStudents.length} Peserta Ujian</b> •
@@ -840,11 +877,21 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
+              <label className="inline-flex items-center gap-1.5 cursor-pointer text-xs select-none" title="Sertakan logo resmi pada kop">
+                <input
+                  type="checkbox"
+                  checked={includeLogo}
+                  onChange={e => setIncludeLogo(e.target.checked)}
+                  className="rounded text-emerald-600 focus:ring-emerald-500"
+                />
+                <span className="font-semibold text-slate-700">Sertakan Logo di Kop</span>
+              </label>
+
               <button
                 type="button"
                 onClick={handleGenerateData}
-                className="px-4 py-2 rounded-lg bg-[#F1F3F5] hover:bg-[#E9ECEF] text-[#1A1C1E] text-xs font-bold transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer"
               >
                 Muat Ulang Data
               </button>
@@ -854,8 +901,8 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
 
         {/* Additional Edit Form for Berita Acara (only shown when minutes tab is active) */}
         {docType === 'minutes' && (
-          <div className="bg-[#F0F5FF] border border-[#B3D1FF] rounded-2xl p-4 shadow-2xs space-y-3">
-            <div className="flex items-center gap-2 text-xs font-bold text-[#0052CC]">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 shadow-2xs space-y-3">
+            <div className="flex items-center gap-2 text-xs font-bold text-emerald-800">
               <Edit3 className="w-4 h-4" />
               <span>Pengaturan & Penandatangan Berita Acara Ujian</span>
             </div>
@@ -906,7 +953,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
               <div className="space-y-1">
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="font-bold text-[#1A1C1E]">
-                    Kehadiran Peserta (Total: <span className="text-[#0052CC] font-extrabold">{filteredStudents.length} Siswa</span>):
+                    Kehadiran Peserta (Total: <span className="text-emerald-800 font-extrabold">{filteredStudents.length} Siswa</span>):
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
@@ -944,6 +991,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
       {/* ========================================================================= */}
       {printData ? (
         <div
+          ref={printableRef}
           className="printable-sheet bg-white max-w-4xl mx-auto shadow-sm border border-[#DEE2E6] rounded-2xl p-3 sm:p-6 md:p-10 text-black leading-normal overflow-x-auto"
           style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}
         >
@@ -966,7 +1014,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                   >
                     {/* Page Header Indicator (Screen view only) */}
                     <div className="no-print pb-2 mb-3 border-b border-slate-200 flex items-center justify-between text-xs text-slate-500 font-semibold">
-                      <span className="font-bold text-[#0052CC]">
+                      <span className="font-bold text-emerald-800">
                         Lembar Halaman Cetak #{pageItem.pageIndex} ({pageItem.className})
                       </span>
                       <span>{pageItem.students.length} Kartu Siswa di Halaman Ini</span>
@@ -1007,25 +1055,53 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                           >
                             {/* KOP KARTU PESERTA */}
                             <div className="border-b-2 border-black pb-2 flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <div className="w-8 h-8 rounded bg-black text-white flex items-center justify-center font-bold text-xs shrink-0">
-                                  MA
-                                </div>
-                                <div className="leading-tight">
-                                  <div className="text-[9px] uppercase font-bold text-slate-700">
-                                    MAJELIS DIKDASMEN MUHAMMADIYAH
+                              <div className="flex items-center gap-2" style={{ flex: '1 1 0%', minWidth: 0 }}>
+                                {includeLogo ? (
+                                  <div
+                                    className="shrink-0 flex items-center justify-center"
+                                    style={{
+                                      width: '36px',
+                                      height: '36px',
+                                      minWidth: '36px',
+                                      maxWidth: '36px',
+                                      flexShrink: 0,
+                                      marginRight: '8px'
+                                    }}
+                                  >
+                                    {schoolSettings.LOGO_URL === 'MUHAMMADIYAH_STANDARD' ? (
+                                      <MuhammadiyahLogoSvg size={34} className="w-9 h-9" />
+                                    ) : schoolSettings.LOGO_URL && schoolSettings.LOGO_URL !== '/logo-ma-cikaramas.svg' ? (
+                                      <img
+                                        src={schoolSettings.LOGO_URL}
+                                        alt="Logo"
+                                        className="max-h-9 max-w-9 object-contain"
+                                        style={{ maxHeight: '34px', maxWidth: '34px', objectFit: 'contain', display: 'block' }}
+                                        referrerPolicy="no-referrer"
+                                      />
+                                    ) : (
+                                      <MaCikaramasLogoSvg
+                                        size={34}
+                                        className="w-9 h-9"
+                                        idSuffix={`card-${st.ID || cardIdx}`}
+                                      />
+                                    )}
                                   </div>
-                                  <div className="text-xs font-black uppercase text-black tracking-tight">
-                                    MAS MUHAMMADIYAH CIKARAMAS
+                                ) : null}
+                                <div className="leading-tight" style={{ flex: '1 1 0%', minWidth: 0 }}>
+                                  <div className="text-[8px] uppercase font-bold text-slate-700 truncate">
+                                    {schoolSettings.KOP_HEADER_1 || 'MAJELIS PENDIDIKAN DASAR DAN MENENGAH'}
                                   </div>
-                                  <div className="text-[9px] font-bold text-[#0052CC]">
-                                    KARTU PESERTA {assessmentTitle.toUpperCase()} • TP {schoolSettings.SCHOOL_YEAR || '2026/2027'}
+                                  <div className="text-[11px] sm:text-xs font-black uppercase text-black tracking-tight font-serif truncate">
+                                    {schoolSettings.SCHOOL_NAME || 'MA. MUHAMMADIYAH CIKARAMAS'}
+                                  </div>
+                                  <div className="text-[8.5px] font-bold text-emerald-800 font-serif truncate">
+                                    KARTU PESERTA {assessmentTitle.toUpperCase()} • TP {schoolYear} - {cleanSemesterLabel}
                                   </div>
                                 </div>
                               </div>
 
-                              <div className="text-right shrink-0">
-                                <span className="font-mono font-bold text-[10px] px-1.5 py-0.5 rounded border border-black bg-slate-100 block">
+                              <div className="text-right shrink-0" style={{ flexShrink: 0 }}>
+                                <span className="font-mono font-bold text-[9.5px] px-1.5 py-0.5 rounded border border-black bg-slate-100 block whitespace-nowrap">
                                   {noPeserta}
                                 </span>
                               </div>
@@ -1109,31 +1185,33 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                             )}
 
                             {/* BARCODE & SIGNATURE FOOTER */}
-                            <div className="border-t border-black pt-2 mt-auto">
-                              <div className="flex items-end justify-between gap-2">
+                            <div className="border-t border-black pt-1.5 mt-auto">
+                              <div className="flex items-end justify-between gap-1.5">
                                 {/* Barcode Horizontal */}
-                                <div className="max-w-[140px]">
-                                  <SvgBarcode value={nisn} width={cardGridMode === 'GRID_6' ? 110 : 130} height={20} showText />
+                                <div className="flex-1 min-w-0 overflow-hidden">
+                                  <SvgBarcode value={nisn} width={cardGridMode === 'GRID_6' ? 95 : 120} height={18} showText />
                                 </div>
 
                                 {/* Tanda Tangan Kepala Madrasah */}
-                                <div className="text-center text-[9px] leading-tight shrink-0 space-y-4">
+                                <div className="w-28 sm:w-32 text-center text-[8.5px] leading-tight shrink-0 flex flex-col justify-between h-20">
                                   <div>
-                                    Sumedang, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}<br />
-                                    Kepala Madrasah,
+                                    <div className="truncate">
+                                      {(schoolSettings.SCHOOL_CITY || 'Sumedang').replace(/^Kabupaten\s+/i, 'Kab. ')}, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    </div>
+                                    <div className="font-semibold">{schoolSettings.PRINCIPAL_TITLE || 'Kepala Madrasah'},</div>
                                   </div>
-                                  <div>
-                                    <div className="font-bold underline text-black">
+                                  <div className="mt-auto">
+                                    <div className="font-bold underline text-black truncate">
                                       {schoolSettings.PRINCIPAL_NAME || 'Ai Sukaesih, S.Pd'}
                                     </div>
-                                    <div className="font-mono text-[8px] text-slate-700">
+                                    <div className="font-mono text-[7.5px] text-slate-700">
                                       NBM. {schoolSettings.PRINCIPAL_NIP || '1281201'}
                                     </div>
                                   </div>
                                 </div>
                               </div>
 
-                              <div className="text-[8px] text-slate-500 italic mt-1 border-t border-dashed border-slate-300 pt-0.5 text-center">
+                              <div className="text-[7.5px] text-slate-500 italic mt-1 border-t border-dashed border-slate-300 pt-0.5 text-center">
                                 *Wajib dibawa saat asesmen & jaga kerahasiaan password akun CBT Anda.
                               </div>
                             </div>
@@ -1152,24 +1230,12 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
           {/* ===================================================================== */}
           {docType === 'minutes' && (
             <div className="space-y-6 text-black text-xs leading-relaxed">
-              {/* KOP RESMI MADRASAH */}
-              <div className="text-center pb-3 border-b-4 border-double border-black space-y-1">
-                <div className="text-[11px] uppercase font-bold tracking-wider text-black">
-                  MAJELIS PENDIDIKAN DASAR DAN MENENGAH DAN PENDIDIKAN NONFORMAL
-                </div>
-                <div className="text-[11px] uppercase font-bold text-black">
-                  PIMPINAN CABANG MUHAMMADIYAH CIKARAMAS
-                </div>
-                <h2 className="text-lg sm:text-xl font-black uppercase text-black tracking-tight">
-                  MADRASAH ALIYAH MUHAMMADIYAH CIKARAMAS
-                </h2>
-                <div className="text-[11px] text-black">
-                  NSM: 131232110023 • NPSN: 69947812 • Status Akreditasi: B
-                </div>
-                <div className="text-[11px] text-black">
-                  Alamat: Jl. Raya Cikaramas - Wado No. 12, Kec. Tanjungmedar, Kab. Sumedang 45354
-                </div>
-              </div>
+              {/* KOP RESMI MADRASAH SESUAI FORMAT RESMI (TANPA LOGO KEMENAG KANAN) */}
+              <OfficialKopSurat
+                settings={schoolSettings}
+                showLogo={includeLogo}
+                idSuffix="ba"
+              />
 
               {/* JUDUL BERITA ACARA */}
               <div className="text-center space-y-1 pt-1">
@@ -1177,7 +1243,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                   BERITA ACARA PELAKSANAAN {assessmentTitle.toUpperCase()}
                 </h3>
                 <div className="text-[11px] font-semibold text-slate-800">
-                  Tahun Pelajaran {schoolSettings.SCHOOL_YEAR || '2026/2027'} - {cleanSemesterLabel}
+                  Tahun Pelajaran {schoolYear} - {cleanSemesterLabel}
                 </div>
               </div>
 
@@ -1185,7 +1251,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
               <p className="text-justify indent-8 leading-relaxed">
                 Pada hari ini, <b>{new Date().toLocaleDateString('id-ID', { weekday: 'long' })}</b>, tanggal{' '}
                 <b>{new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</b>, bertempat di{' '}
-                <b>MAS Muhammadiyah Cikaramas</b>, telah diselenggarakan pelaksanaan ujian CBT dengan rincian data sebagai berikut:
+                <b>{schoolSettings.SCHOOL_NAME || 'MAS Muhammadiyah Cikaramas'}</b>, telah diselenggarakan pelaksanaan ujian CBT dengan rincian data sebagai berikut:
               </p>
 
               {/* TABEL RINCIAN MATA PELAJARAN & PELAKSANAAN */}
@@ -1200,7 +1266,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                     </tr>
                     <tr className="border-b border-black">
                       <td className="p-2 font-semibold bg-slate-100 border-r border-black">Jenis Penilaian / Ujian</td>
-                      <td className="p-2 font-bold text-[#0052CC]">{assessmentTitle}</td>
+                      <td className="p-2 font-bold text-black">{assessmentTitle}</td>
                     </tr>
                     <tr className="border-b border-black">
                       <td className="p-2 font-semibold bg-slate-100 border-r border-black">Kelas / Rombel</td>
@@ -1224,7 +1290,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                     </tr>
                     <tr className="border-b border-black">
                       <td className="p-2 font-semibold bg-slate-100 border-r border-black">Ruang & Sesi</td>
-                      <td className="p-2 font-bold text-[#0052CC]">
+                      <td className="p-2 font-bold text-black">
                         {printData.exam?.ROOM || (selectedRoom === 'ALL' ? 'Ruang 01 / Lab Komputer' : selectedRoom)} •{' '}
                         {printData.exam?.SESSION || (selectedSession === 'ALL' ? 'Sesi 1' : selectedSession)}
                       </td>
@@ -1301,7 +1367,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                       {studentsByClass.map((grp, idx) => (
                         <tr key={grp.classId}>
                           <td className="p-2 border-r border-black font-mono">{idx + 1}</td>
-                          <td className="p-2 border-r border-black text-left font-bold text-[#0052CC]">
+                          <td className="p-2 border-r border-black text-left font-bold text-black">
                             {grp.className}
                           </td>
                           <td className="p-2 border-r border-black font-mono font-bold">
@@ -1334,51 +1400,58 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
 
               {/* KOLOM TANDA TANGAN PENGAWAS & KEPALA MADRASAH */}
               <div className="pt-6 break-inside-avoid" style={{ pageBreakInside: 'avoid' }}>
-                <div className="grid grid-cols-3 gap-4 text-center text-xs">
+                {/* Titimangsa Tempat & Tanggal Dokumen */}
+                <div className="flex justify-end text-xs mb-3">
+                  <div className="w-1/3 text-center">
+                    {(schoolSettings.SCHOOL_CITY || 'Sumedang').replace(/^Kabupaten\s+/i, '')}, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-6 text-center text-xs">
                   {/* Mengetahui Kepala Madrasah */}
-                  <div className="space-y-16">
+                  <div className="flex flex-col justify-between h-36">
                     <div>
-                      Mengetahui,<br />
-                      Kepala Madrasah,
+                      <div className="font-medium">Mengetahui,</div>
+                      <div className="font-bold">{schoolSettings.PRINCIPAL_TITLE || 'Kepala Madrasah'}</div>
                     </div>
-                    <div>
-                      <div className="font-bold underline text-black">
+                    <div className="mt-auto">
+                      <div className="font-bold underline text-black uppercase">
                         {schoolSettings.PRINCIPAL_NAME || 'Ai Sukaesih, S.Pd'}
                       </div>
-                      <div className="font-mono text-[11px]">
+                      <div className="font-mono text-[11px] text-slate-800">
                         NBM. {schoolSettings.PRINCIPAL_NIP || '1281201'}
                       </div>
                     </div>
                   </div>
 
                   {/* Proktor CBT */}
-                  <div className="space-y-16">
+                  <div className="flex flex-col justify-between h-36">
                     <div>
-                      Proktor CBT,<br />
-                      MAS Muhammadiyah Cikaramas,
+                      <div className="font-bold">Proktor CBT,</div>
+                      <div className="text-[11px] text-slate-700">{schoolSettings.SCHOOL_NAME || 'MAS Muhammadiyah Cikaramas'}</div>
                     </div>
-                    <div>
-                      <div className="font-bold underline text-black">
+                    <div className="mt-auto">
+                      <div className="font-bold underline text-black uppercase">
                         {beritaAcaraData.proktor || 'Asep Saepuloh, S.Kom'}
                       </div>
-                      <div className="font-mono text-[11px]">
-                        {beritaAcaraData.proktorNbm || 'NBM. 1281209'}
+                      <div className="font-mono text-[11px] text-slate-800">
+                        {beritaAcaraData.proktorNbm ? (beritaAcaraData.proktorNbm.startsWith('NBM') ? beritaAcaraData.proktorNbm : `NBM. ${beritaAcaraData.proktorNbm}`) : 'NBM. 1281209'}
                       </div>
                     </div>
                   </div>
 
                   {/* Pengawas Ruang */}
-                  <div className="space-y-16">
+                  <div className="flex flex-col justify-between h-36">
                     <div>
-                      Sumedang, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}<br />
-                      Pengawas Ruang,
+                      <div className="font-bold">Pengawas Ruang,</div>
+                      <div className="text-[11px] text-slate-700">Ruang Asesmen CBT</div>
                     </div>
-                    <div>
-                      <div className="font-bold underline text-black">
-                        {beritaAcaraData.pengawas1 || 'Ai Sukaesih, S.Pd'}
+                    <div className="mt-auto">
+                      <div className="font-bold underline text-black uppercase">
+                        {beritaAcaraData.pengawas1 || printData.exam?.SUPERVISOR || 'Ai Sukaesih, S.Pd'}
                       </div>
-                      <div className="font-mono text-[11px]">
-                        {beritaAcaraData.pengawas1Nbm || 'NBM. 1281201'}
+                      <div className="font-mono text-[11px] text-slate-800">
+                        {beritaAcaraData.pengawas1Nbm ? (beritaAcaraData.pengawas1Nbm.startsWith('NBM') ? beritaAcaraData.pengawas1Nbm : `NBM. ${beritaAcaraData.pengawas1Nbm}`) : 'NBM. 1281201'}
                       </div>
                     </div>
                   </div>
@@ -1407,23 +1480,28 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                     {/* Screen View Indicator */}
                     {studentsByClass.length > 1 && (
                       <div className="no-print pb-1 mb-2 border-b border-slate-200 flex items-center justify-between text-xs text-slate-500 font-semibold">
-                        <span className="bg-[#EBF3FF] text-[#0052CC] px-2 py-0.5 rounded font-bold">
+                        <span className="bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded font-bold">
                           Bagian #{groupIdx + 1}: {classGroup.className}
                         </span>
                         <span>{classGroup.students.length} Siswa Terdaftar</span>
                       </div>
                     )}
 
-                    {/* KOP DAFTAR HADIR */}
-                    <div className="text-center pb-3 border-b-2 border-black space-y-1">
-                      <div className="text-[11px] uppercase font-bold text-slate-700">
-                        MAJELIS DIKDASMEN DAN PNF MUHAMMADIYAH CIKARAMAS
-                      </div>
-                      <h2 className="text-base sm:text-lg font-black uppercase text-black tracking-tight">
+                    {/* KOP DAFTAR HADIR SESUAI FORMAT RESMI (TANPA LOGO KEMENAG KANAN) */}
+                    <OfficialKopSurat
+                      settings={schoolSettings}
+                      showLogo={includeLogo}
+                      idSuffix={`dh-${groupIdx}`}
+                      compact
+                    />
+
+                    {/* JUDUL DAFTAR HADIR PESERTA */}
+                    <div className="text-center space-y-0.5 py-1">
+                      <h3 className="text-sm sm:text-base font-extrabold uppercase tracking-wide underline font-serif text-black">
                         DAFTAR HADIR PESERTA {assessmentTitle.toUpperCase()}
-                      </h2>
-                      <div className="text-[11px] font-semibold text-slate-700">
-                        MAS MUHAMMADIYAH CIKARAMAS • TP {schoolSettings.SCHOOL_YEAR || '2026/2027'} - {cleanSemesterLabel}
+                      </h3>
+                      <div className="text-[11px] font-semibold text-slate-800 font-serif">
+                        TAHUN PELAJARAN {schoolYear} - {cleanSemesterLabel.toUpperCase()}
                       </div>
                     </div>
 
@@ -1431,11 +1509,11 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                     <div className="grid grid-cols-2 gap-4 text-xs border border-black p-3 rounded bg-slate-50">
                       <div className="space-y-1">
                         <div>Mata Pelajaran: <b className="uppercase">{printData.exam?.SUBJECT_NAME || 'Mata Pelajaran'}</b></div>
-                        <div>Jenis Penilaian: <b className="text-[#0052CC]">{assessmentTitle}</b></div>
+                        <div>Jenis Penilaian: <b className="text-black">{assessmentTitle}</b></div>
                         <div>Ruang & Sesi: <b>{printData.exam?.ROOM || (selectedRoom === 'ALL' ? 'Ruang 01 / Lab Komputer' : selectedRoom)} / {printData.exam?.SESSION || (selectedSession === 'ALL' ? 'Sesi 1' : selectedSession)}</b></div>
                       </div>
                       <div className="space-y-1">
-                        <div>Kelas / Rombel: <b className="text-[#0052CC]">{classGroup.className}</b> (Total: <b>{classGroup.students.length} Siswa</b>)</div>
+                        <div>Kelas / Rombel: <b className="text-black">{classGroup.className}</b> (Total: <b>{classGroup.students.length} Siswa</b>)</div>
                         <div>Hari, Tanggal: <b>{printData.exam?.FORMATTED_DATE || new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</b></div>
                         <div>Waktu & Durasi: <b className="font-mono">{formatExamTimeRange(printData.exam?.START_TIME, printData.exam?.DURATION_MIN)}</b></div>
                       </div>
@@ -1472,24 +1550,46 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                       </tbody>
                     </table>
 
-                    {/* TANDA TANGAN PENGAWAS DAFTAR HADIR */}
-                    <div className="flex justify-between items-end pt-6 break-inside-avoid" style={{ pageBreakInside: 'avoid' }}>
-                      <div className="text-[11px] text-slate-600">
-                        * Lembar daftar hadir resmi untuk verifikasi kehadiran peserta ujian {classGroup.className}.
+                    {/* TANDA TANGAN RESMI DAFTAR HADIR */}
+                    <div className="pt-6 break-inside-avoid text-xs" style={{ pageBreakInside: 'avoid' }}>
+                      <div className="flex justify-between items-start px-2">
+                        {/* Kiri: Mengetahui Kepala Madrasah */}
+                        <div className="w-64 text-center flex flex-col justify-between h-36">
+                          <div>
+                            <div className="font-medium">Mengetahui,</div>
+                            <div className="font-bold">{schoolSettings.PRINCIPAL_TITLE || 'Kepala Madrasah'}</div>
+                          </div>
+                          <div className="mt-auto">
+                            <div className="font-bold underline text-black uppercase">
+                              {schoolSettings.PRINCIPAL_NAME || 'Ai Sukaesih, S.Pd'}
+                            </div>
+                            <div className="font-mono text-[11px] text-slate-800">
+                              NBM. {schoolSettings.PRINCIPAL_NIP || '1281201'}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Kanan: Titimangsa & Pengawas Ruang */}
+                        <div className="w-64 text-center flex flex-col justify-between h-36">
+                          <div>
+                            <div>
+                              {(schoolSettings.SCHOOL_CITY || 'Sumedang').replace(/^Kabupaten\s+/i, '')}, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+                            </div>
+                            <div className="font-bold">Pengawas Ruang,</div>
+                          </div>
+                          <div className="mt-auto">
+                            <div className="font-bold underline text-black uppercase">
+                              {beritaAcaraData.pengawas1 || printData.exam?.SUPERVISOR || 'Ai Sukaesih, S.Pd'}
+                            </div>
+                            <div className="font-mono text-[11px] text-slate-800">
+                              {beritaAcaraData.pengawas1Nbm ? (beritaAcaraData.pengawas1Nbm.startsWith('NBM') ? beritaAcaraData.pengawas1Nbm : `NBM. ${beritaAcaraData.pengawas1Nbm}`) : 'NBM. 1281201'}
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      <div className="text-center text-xs space-y-16 shrink-0">
-                        <div>
-                          Sumedang, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}<br />
-                          Pengawas Ruang,
-                        </div>
-                        <div>
-                          <div className="font-bold underline text-black">
-                            {beritaAcaraData.pengawas1 || printData.exam?.SUPERVISOR || 'Ai Sukaesih, S.Pd'}
-                          </div>
-                          <div className="font-mono text-[11px]">
-                            {beritaAcaraData.pengawas1Nbm || 'NBM. 1281201'}
-                          </div>
-                        </div>
+
+                      <div className="text-[10px] text-slate-500 italic mt-4 pt-1 border-t border-dotted border-slate-300 text-center">
+                        * Lembar daftar hadir resmi untuk verifikasi kehadiran peserta ujian kelas {classGroup.className}.
                       </div>
                     </div>
                   </div>

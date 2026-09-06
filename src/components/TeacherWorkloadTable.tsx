@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Briefcase,
   Printer,
@@ -31,6 +31,9 @@ import {
   getSchoolSettings,
   getClasses
 } from '../services/lmsStorage';
+import { printElementReliable, formatDocumentSemester } from '../utils/printHelper';
+import { MaCikaramasLogoSvg, MuhammadiyahLogoSvg } from './OfficialLogos';
+import { OfficialKopSurat } from './OfficialKopSurat';
 
 interface TeacherWorkloadTableProps {
   token: string;
@@ -46,7 +49,7 @@ export const TeacherWorkloadTable: React.FC<TeacherWorkloadTableProps> = ({
   onDataChanged
 }) => {
   const [assignments, setAssignments] = useState<TeacherAssignmentRow[]>(() => getTeacherAssignments(token));
-  const [schoolSettings] = useState<SchoolSettings>(() => getSchoolSettings());
+  const [schoolSettings, setSchoolSettings] = useState<SchoolSettings>(() => getSchoolSettings());
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCertification, setFilterCertification] = useState<'ALL' | 'MEETS' | 'NOT_MEETS'>('ALL');
   const [viewMode, setViewMode] = useState<'SUBJECT_DETAIL' | 'TEACHER_SUMMARY'>('TEACHER_SUMMARY');
@@ -57,6 +60,7 @@ export const TeacherWorkloadTable: React.FC<TeacherWorkloadTableProps> = ({
   // Print modal state
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [printFormat, setPrintFormat] = useState<'DETAIL' | 'REKAP_GURU'>('REKAP_GURU');
+  const workloadPrintRef = useRef<HTMLDivElement>(null);
 
   // Edit / Add modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -67,9 +71,14 @@ export const TeacherWorkloadTable: React.FC<TeacherWorkloadTableProps> = ({
     const handleDataChange = () => {
       setAssignments(getTeacherAssignments(token));
     };
+    const handleSettingsChange = () => {
+      setSchoolSettings(getSchoolSettings());
+    };
     window.addEventListener('LMS_TEACHER_DATA_CHANGED', handleDataChange);
+    window.addEventListener('LMS_SETTINGS_CHANGED', handleSettingsChange);
     return () => {
       window.removeEventListener('LMS_TEACHER_DATA_CHANGED', handleDataChange);
+      window.removeEventListener('LMS_SETTINGS_CHANGED', handleSettingsChange);
     };
   }, [token]);
 
@@ -1253,15 +1262,25 @@ export const TeacherWorkloadTable: React.FC<TeacherWorkloadTableProps> = ({
             {/* Top Modal Controls */}
             <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 bg-slate-100 no-print">
               <div className="flex items-center gap-2">
-                <Printer className="w-4 h-4 text-[#0052CC]" />
+                <Printer className="w-4 h-4 text-emerald-700" />
                 <h3 className="font-bold text-sm text-[#1A1C1E]">
                   Pratinjau Cetak: SK Pembagian Tugas Mengajar & Beban Kerja Guru
                 </h3>
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => window.print()}
-                  className="px-4 py-1.5 text-xs font-bold rounded-md bg-[#0052CC] text-white hover:bg-blue-700 flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  onClick={() => {
+                    if (workloadPrintRef.current) {
+                      printElementReliable(workloadPrintRef.current, {
+                        title: 'SK_Pembagian_Tugas_Mengajar_Guru',
+                        paperSize: 'A4',
+                        orientation: 'landscape'
+                      });
+                    } else {
+                      window.print();
+                    }
+                  }}
+                  className="px-4 py-1.5 text-xs font-bold rounded-md bg-emerald-700 text-white hover:bg-emerald-800 flex items-center gap-1.5 shadow-xs cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   <span>Cetak Sekarang (Print)</span>
@@ -1276,18 +1295,13 @@ export const TeacherWorkloadTable: React.FC<TeacherWorkloadTableProps> = ({
             </div>
 
             {/* Printable Document Body */}
-            <div className="p-8 overflow-y-auto bg-white text-black font-serif text-[11px] leading-snug print:p-0 print:m-0">
-              {/* KOP SURAT MADRASAH */}
-              <div className="text-center border-b-2 border-black pb-3 mb-4">
-                <h4 className="text-xs uppercase tracking-wider font-semibold">PIMPINAN CABANG MUHAMMADIYAH TANJUNGMEDAR</h4>
-                <h3 className="text-sm sm:text-base font-bold uppercase tracking-wide">MAJELIS PENDIDIKAN DASAR DAN MENENGAH</h3>
-                <h2 className="text-base sm:text-lg font-extrabold uppercase text-blue-900 tracking-normal">
-                  MADRASAH ALIYAH MUHAMMADIYAH CIKARAMAS
-                </h2>
-                <p className="text-[10px] text-gray-700 italic">
-                  Alamat: Jl. Cikaramas No. 1 Desa Cikaramas Kec. Tanjungmedar Kab. Sumedang 45354
-                </p>
-              </div>
+            <div ref={workloadPrintRef} className="p-8 overflow-y-auto bg-white text-black font-serif text-[11px] leading-snug print:p-0 print:m-0">
+              {/* KOP SURAT MADRASAH RESMI (FORMAT BARU TANPA LOGO KEMENAG KANAN) */}
+              <OfficialKopSurat
+                settings={schoolSettings || undefined}
+                idSuffix="sk-pembagian-tugas"
+                className="mb-4"
+              />
 
               {/* JUDUL DOKUMEN */}
               <div className="text-center mb-4">
@@ -1295,13 +1309,13 @@ export const TeacherWorkloadTable: React.FC<TeacherWorkloadTableProps> = ({
                   LAMPIRAN KEPUTUSAN KEPALA MADRASAH ALIYAH MUHAMMADIYAH CIKARAMAS
                 </p>
                 <p className="text-[10px]">
-                  NOMOR : 045 / KEP / MAM.CKR / VII / 2026
+                  NOMOR : 045 / KEP / MAM.CKR / VII / {schoolSettings.SCHOOL_YEAR ? schoolSettings.SCHOOL_YEAR.split('/')[0] : '2026'}
                 </p>
                 <p className="font-bold uppercase text-[11px] mt-1">
                   TENTANG PEMBAGIAN TUGAS GURU DALAM PROSES BELAJAR MENGAJAR DAN TUGAS TAMBAHAN
                 </p>
                 <p className="font-semibold text-[10px]">
-                  SEMESTER GANJIL & GENAP TAHUN PELAJARAN 2026/2027
+                  SEMESTER {formatDocumentSemester(schoolSettings.SEMESTER)} TAHUN PELAJARAN {schoolSettings.SCHOOL_YEAR || '2026/2027'}
                 </p>
               </div>
 
@@ -1387,20 +1401,29 @@ export const TeacherWorkloadTable: React.FC<TeacherWorkloadTableProps> = ({
                 </tfoot>
               </table>
 
-              {/* TANDA TANGAN KEPALA MADRASAH */}
-              <div className="flex justify-between items-start mt-6 pt-2 text-[10px]">
-                <div>
-                  <p className="font-semibold">Catatan:</p>
+              {/* TANDA TANGAN RESMI KEPALA MADRASAH */}
+              <div className="flex justify-between items-start mt-6 pt-2 text-[10px] break-inside-avoid" style={{ pageBreakInside: 'avoid' }}>
+                <div className="max-w-xs space-y-1">
+                  <p className="font-bold text-black">Catatan:</p>
                   <p>1. Beban kerja guru sekurang-kurangnya 24 jam tatap muka per minggu.</p>
-                  <p>2. Diberlakukan sejak tanggal ditetapkan.</p>
+                  <p>2. Diberlakukan sejak tanggal ditetapkan untuk tahun ajaran aktif.</p>
                 </div>
-                <div className="text-center min-w-[200px]">
-                  <p>Ditetapkan di : Cikaramas</p>
-                  <p>Pada Tanggal : 13 Juli 2026</p>
-                  <p className="font-bold mt-1">Kepala MA Muhammadiyah Cikaramas,</p>
-                  <div className="h-16"></div>
-                  <p className="font-bold underline text-xs">AI SUKAESIH, S.Pd</p>
-                  <p>NBM. 1281201</p>
+                <div className="w-64 text-center flex flex-col justify-between h-36">
+                  <div>
+                    <p>Ditetapkan di : {(schoolSettings?.SCHOOL_CITY || 'Sumedang').replace(/^Kabupaten\s+/i, '')}</p>
+                    <p>Pada Tanggal : {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                    <p className="font-bold mt-1 text-black">
+                      {schoolSettings?.PRINCIPAL_TITLE || 'Kepala Madrasah'},
+                    </p>
+                  </div>
+                  <div className="mt-auto">
+                    <p className="font-bold underline text-xs uppercase text-black">
+                      {schoolSettings?.PRINCIPAL_NAME || 'Ai Sukaesih, S.Pd'}
+                    </p>
+                    <p className="font-mono text-[9.5px] text-slate-800">
+                      NBM. {schoolSettings?.PRINCIPAL_NIP || '1281201'}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>

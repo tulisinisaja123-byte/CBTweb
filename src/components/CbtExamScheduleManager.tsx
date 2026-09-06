@@ -56,7 +56,8 @@ import {
   subscribeToStorageChange,
   getSchoolSettings as getLocalSchoolSettings,
   getTimeOfDayPeriod,
-  formatTimeWithPeriod
+  formatTimeWithPeriod,
+  calculateEndTime
 } from '../services/lmsStorage';
 import {
   bulkSaveExams,
@@ -74,9 +75,14 @@ import {
 import { SupabaseRawExamsInspector } from './SupabaseRawExamsInspector';
 import { DailySchoolPresenceModal } from './DailySchoolPresenceModal';
 import { SessionPresetsModal } from './SessionPresetsModal';
+import { ExamSchedulePrintModal } from './ExamSchedulePrintModal';
+import { printElementReliable } from '../utils/printHelper';
+import { MaCikaramasLogoSvg, MuhammadiyahLogoSvg } from './OfficialLogos';
+import { OfficialKopSurat } from './OfficialKopSurat';
 
 interface CbtExamScheduleManagerProps {
   token: string;
+  settings?: SchoolSettings | null;
   exams?: Exam[];
   classes?: ClassItem[];
   subjects?: Subject[];
@@ -126,6 +132,7 @@ function formatSafeDate(dateStr?: string, options?: Intl.DateTimeFormatOptions):
 
 export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
   token,
+  settings: propSettings,
   exams = [],
   classes = [],
   subjects = [],
@@ -216,10 +223,12 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
   const [editingExam, setEditingExam] = useState<Partial<Exam> | null>(null);
   const [isAutoGeneratorModalOpen, setIsAutoGeneratorModalOpen] = useState(false);
   const [isMasterPrintModalOpen, setIsMasterPrintModalOpen] = useState(false);
+  const [isSchedulePrintModalOpen, setIsSchedulePrintModalOpen] = useState(false);
   const [isDailyPresenceModalOpen, setIsDailyPresenceModalOpen] = useState(false);
   const [isSessionSettingsModalOpen, setIsSessionSettingsModalOpen] = useState(false);
   const [sessionPresets, setSessionPresets] = useState<ExamSessionPreset[]>(() => getSessionPresets());
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const masterPrintRef = useRef<HTMLDivElement>(null);
 
   // Background stale detector for Supabase lms_exams
   const checkSupabaseStale = async () => {
@@ -273,6 +282,7 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
     assessmentTypeId: string;
     examDate: string;
     startTime: string;
+    endTime: string;
     durationMin: number;
     room: string;
     session: string;
@@ -300,6 +310,7 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
     assessmentTypeId: safeAssessmentTypes[0]?.ID || 'SAS',
     examDate: new Date().toISOString().split('T')[0],
     startTime: '07:30',
+    endTime: '09:00',
     durationMin: 90,
     room: 'Ruang 01',
     session: 'Sesi 1 (07:30 - 09:00)',
@@ -368,13 +379,33 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
   const classMap = useMemo(() => new Map(safeClasses.map(c => [c.ID, c.NAME])), [safeClasses]);
   const subjectMap = useMemo(() => new Map(safeSubjects.map(s => [s.ID, s.NAME])), [safeSubjects]);
   const assessmentMap = useMemo(() => new Map(safeAssessmentTypes.map(a => [a.ID, a.NAME])), [safeAssessmentTypes]);
-  const [settings, setSettings] = useState<SchoolSettings>(() => getLocalSchoolSettings());
+  const [settings, setSettings] = useState<SchoolSettings>(() => propSettings || getLocalSchoolSettings());
 
   useEffect(() => {
-    getSchoolSettings().then((s) => {
-      if (s) setSettings(s);
-    }).catch(() => {});
-  }, []);
+    if (propSettings) {
+      setSettings(propSettings);
+    } else {
+      getSchoolSettings().then((s) => {
+        if (s) setSettings(s);
+      }).catch(() => {});
+    }
+  }, [propSettings]);
+
+  // Dynamic Assessment and Semester Title based on settings
+  const activeAssessmentName = useMemo(() => {
+    if (selectedAssessmentFilter !== 'ALL') {
+      const found = safeAssessmentTypes.find(at => at.ID === selectedAssessmentFilter || at.CODE === selectedAssessmentFilter);
+      if (found?.NAME) return found.NAME;
+    }
+    return settings.DEFAULT_ASSESSMENT_NAME || settings.ASSESSMENT_TITLE || 'Sumatif Akhir Semester';
+  }, [selectedAssessmentFilter, safeAssessmentTypes, settings]);
+
+  const cleanSemesterName = useMemo(() => {
+    const raw = settings.SEMESTER || '1 (Ganjil)';
+    if (raw.toLowerCase().includes('ganjil') || raw === '1') return 'Ganjil';
+    if (raw.toLowerCase().includes('genap') || raw === '2') return 'Genap';
+    return raw.replace(/^semester\s+/i, '').trim();
+  }, [settings.SEMESTER]);
 
   // Filtered Exams (Respecting both single CLASS_ID and multi-class CLASS_IDS)
   const filteredExams = useMemo(() => {
@@ -577,6 +608,7 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
       assessmentTypeId: chosenAssessment,
       examDate: chosenDate,
       startTime: '07:30',
+      endTime: '09:00',
       durationMin: 90,
       room: 'Ruang 01',
       session: 'Sesi 1 (07:30 - 09:00)',
@@ -626,6 +658,7 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
       assessmentTypeId: exam.ASSESSMENT_TYPE_ID || safeAssessmentTypes[0]?.ID || 'SAS',
       examDate: exam.EXAM_DATE || new Date().toISOString().split('T')[0],
       startTime: exam.START_TIME || '07:30',
+      endTime: (exam.END_TIME && exam.END_TIME.trim()) ? exam.END_TIME.trim() : calculateEndTime(exam.START_TIME || '07:30', exam.DURATION_MIN || 90),
       durationMin: exam.DURATION_MIN || 90,
       room: exam.ROOM || 'Ruang 01',
       session: exam.SESSION || 'Sesi 1',
@@ -708,8 +741,8 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
 
     try {
       // Calculate end time
-      let endTime = '';
-      if (formExam.startTime && formExam.durationMin) {
+      let endTime = (formExam.endTime && formExam.endTime.trim()) ? formExam.endTime.trim() : '';
+      if (!endTime && formExam.startTime && formExam.durationMin) {
         const [h, m] = formExam.startTime.split(':').map(Number);
         const totalMinutes = (h || 0) * 60 + (m || 0) + Number(formExam.durationMin || 90);
         const endH = Math.floor(totalMinutes / 60) % 24;
@@ -1102,6 +1135,14 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
   };
 
   const handlePrintMasterSchedule = () => {
+    if (masterPrintRef.current) {
+      const ok = printElementReliable(masterPrintRef.current, {
+        title: `Master_Jadwal_Ujian_${settings.SCHOOL_NAME || 'CBT'}`,
+        paperSize: 'A4',
+        orientation: 'landscape'
+      });
+      if (ok) return;
+    }
     try {
       window.print();
     } catch (err: any) {
@@ -1204,6 +1245,15 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
                 <span>Generator Jadwal (1-Klik)</span>
               </button>
             )}
+
+            <button
+              onClick={() => setIsSchedulePrintModalOpen(true)}
+              className="px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-[#0052CC] border border-blue-200 font-bold text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+              title="Cetak jadwal pelaksanaan ujian format resmi dengan kolom no, waktu, durasi, kelas dinamis, dan keterangan"
+            >
+              <Printer className="w-4 h-4 text-[#0052CC]" />
+              <span>Cetak Jadwal Ujian</span>
+            </button>
 
             <button
               onClick={() => setIsMasterPrintModalOpen(true)}
@@ -1680,7 +1730,7 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
                           <td className="py-2.5 px-3 font-mono text-slate-800">
                             <div className="font-bold flex items-center gap-1.5">
                               <Clock className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                              <span>{ex.START_TIME || '07:30'} {ex.END_TIME ? `- ${ex.END_TIME}` : ''} WIB</span>
+                              <span>{ex.START_TIME || '07:30'} - {ex.END_TIME || calculateEndTime(ex.START_TIME, ex.DURATION_MIN)} WIB</span>
                             </div>
                             {ex.SESSION && (
                               <div className="text-[10px] text-slate-500 mt-0.5">{ex.SESSION}</div>
@@ -2172,7 +2222,7 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
                         <div className="flex items-center gap-2">
                           <Clock className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                           <span className="font-semibold text-slate-800">
-                            {ex.START_TIME || '07:30'} {ex.END_TIME ? `- ${ex.END_TIME}` : ''} WIB
+                            {ex.START_TIME || '07:30'} - {ex.END_TIME || calculateEndTime(ex.START_TIME, ex.DURATION_MIN)} WIB
                           </span>
                           {ex.SESSION && (
                             <span className="text-slate-400">({ex.SESSION})</span>
@@ -2316,7 +2366,7 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
                         )}
                       </td>
                       <td className="py-2.5 px-3 font-mono text-slate-800">
-                        <div className="font-bold">{ex.START_TIME || '07:30'} - {ex.END_TIME || '09:00'}</div>
+                        <div className="font-bold">{ex.START_TIME || '07:30'} - {ex.END_TIME || calculateEndTime(ex.START_TIME, ex.DURATION_MIN)} WIB</div>
                         <div className="text-[10px] text-slate-400">{ex.DURATION_MIN || 90} Menit</div>
                       </td>
                       <td className="py-2.5 px-3">
@@ -3001,6 +3051,7 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
                         setFormExam({
                           ...formExam,
                           startTime: preset.startTime,
+                          endTime: preset.endTime,
                           durationMin: preset.durationMin,
                           session: `${preset.name} (${preset.startTime} - ${preset.endTime})`
                         });
@@ -3013,8 +3064,8 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
                 </div>
               </div>
 
-              {/* Jam Mulai, Durasi, Sesi */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* Jam Mulai, Durasi, Jam Selesai, Sesi */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
                     <label className="font-semibold text-slate-700">Jam Mulai (WIB) *</label>
@@ -3037,7 +3088,11 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
                   <input
                     type="time"
                     value={formExam.startTime}
-                    onChange={e => setFormExam({ ...formExam, startTime: e.target.value })}
+                    onChange={e => {
+                      const newStart = e.target.value;
+                      const newEnd = calculateEndTime(newStart, formExam.durationMin || 90);
+                      setFormExam({ ...formExam, startTime: newStart, endTime: newEnd });
+                    }}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-[#0052CC] bg-white font-medium text-xs"
                   />
                   {/* Pilihan cepat Pagi / Siang */}
@@ -3051,7 +3106,10 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
                       <button
                         key={t.time}
                         type="button"
-                        onClick={() => setFormExam({ ...formExam, startTime: t.time })}
+                        onClick={() => {
+                          const newEnd = calculateEndTime(t.time, formExam.durationMin || 90);
+                          setFormExam({ ...formExam, startTime: t.time, endTime: newEnd });
+                        }}
                         className={`px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors cursor-pointer ${
                           formExam.startTime === t.time
                             ? 'bg-[#0052CC] text-white border-[#0052CC]'
@@ -3072,7 +3130,9 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
                         onClick={() => {
                           const [h, m] = formExam.startTime.split(':');
                           const newH = (parseInt(h, 10) + 12).toString().padStart(2, '0');
-                          setFormExam({ ...formExam, startTime: `${newH}:${m || '00'}` });
+                          const newStart = `${newH}:${m || '00'}`;
+                          const newEnd = calculateEndTime(newStart, formExam.durationMin || 90);
+                          setFormExam({ ...formExam, startTime: newStart, endTime: newEnd });
                         }}
                         className="px-2 py-1 rounded bg-amber-200 hover:bg-amber-300 font-bold text-[10px] text-amber-900 cursor-pointer self-start"
                       >
@@ -3091,11 +3151,33 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
                       max={240}
                       step={5}
                       value={formExam.durationMin}
-                      onChange={e => setFormExam({ ...formExam, durationMin: Number(e.target.value) })}
+                      onChange={e => {
+                        const newDur = Number(e.target.value);
+                        const newEnd = calculateEndTime(formExam.startTime || '07:30', newDur);
+                        setFormExam({ ...formExam, durationMin: newDur, endTime: newEnd });
+                      }}
                       className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-[#0052CC] bg-white font-medium text-xs"
                     />
                     <span className="text-slate-500 font-medium">Menit</span>
                   </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-slate-700">Jam Selesai (WIB) *</label>
+                    <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                      Batas Akses
+                    </span>
+                  </div>
+                  <input
+                    type="time"
+                    value={formExam.endTime || calculateEndTime(formExam.startTime || '07:30', formExam.durationMin || 90)}
+                    onChange={e => setFormExam({ ...formExam, endTime: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-[#0052CC] bg-white font-medium text-xs"
+                  />
+                  <span className="text-[10px] text-slate-500 block leading-tight">
+                    Siswa tidak dapat mengakses ujian setelah jam ini.
+                  </span>
                 </div>
 
                 <div className="space-y-1">
@@ -3107,6 +3189,17 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
                     onChange={e => setFormExam({ ...formExam, session: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-[#0052CC] bg-white font-medium text-xs"
                   />
+                </div>
+              </div>
+
+              {/* Security Advisory: Jam Mulai & Jam Selesai */}
+              <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-xl flex items-start gap-2.5 text-xs text-blue-900">
+                <Clock className="w-4 h-4 text-[#0052CC] shrink-0 mt-0.5" />
+                <div className="space-y-0.5 leading-snug">
+                  <span className="font-bold">Keamanan Batas Akses Waktu Sesi:</span>
+                  <p className="text-[11px] text-blue-800">
+                    Siswa hanya dapat mengerjakan pada rentang pukul <b>{formExam.startTime || '07:30'} s.d. {formExam.endTime || calculateEndTime(formExam.startTime || '07:30', formExam.durationMin || 90)} WIB</b>. Jika siswa mencoba masuk sebelum jam mulai atau setelah jam selesai, sistem CBT akan mengunci akses secara otomatis.
+                  </p>
                 </div>
               </div>
 
@@ -3768,7 +3861,7 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
                 <button
                   type="button"
                   onClick={handlePrintMasterSchedule}
-                  className="px-4 py-2 rounded-xl bg-[#0052CC] hover:bg-[#0047B3] text-white font-semibold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
                 >
                   <Printer className="w-4 h-4" />
                   <span>Cetak Sekarang (Ctrl + P)</span>
@@ -3784,30 +3877,21 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
             </div>
 
             {/* PRINTABLE OFFICIAL DOCUMENT CONTENT */}
-            <div className="printable-sheet space-y-6 text-black">
-              {/* Kop Surat Resmi Madrasah */}
-              <div className="text-center pb-4 border-b-2 border-double border-black space-y-1">
-                <div className="text-xs uppercase tracking-widest font-semibold text-slate-600">
-                  YAYASAN PENDIDIKAN ISLAM MUHAMMADIYAH
-                </div>
-                <h2 className="text-xl sm:text-2xl font-black uppercase text-black tracking-tight">
-                  {settings.SCHOOL_NAME || 'MADRASAH ALIYAH MUHAMMADIYAH CIKARAMAS'}
-                </h2>
-                <div className="text-xs text-slate-700">
-                  {settings.SCHOOL_ADDRESS || 'Jl. Raya Cikaramas - Wado No. 12, Sumedang, Jawa Barat'} • Telp: {settings.SCHOOL_PHONE || '(0261) 882190'}
-                </div>
-                <div className="text-xs text-slate-700 font-medium">
-                  Website: {settings.SCHOOL_WEBSITE || 'www.mamuhammadiyahcikaramas.sch.id'} • Email: {settings.SCHOOL_EMAIL || 'info@mamuhammadiyahcikaramas.sch.id'}
-                </div>
-              </div>
+            <div ref={masterPrintRef} className="printable-sheet space-y-6 text-black">
+              {/* Kop Surat Resmi Madrasah (Format Baru Tanpa Logo Kemenag Kanan) */}
+              <OfficialKopSurat
+                settings={settings}
+                idSuffix="master-jadwal"
+                className="mb-4"
+              />
 
               {/* Document Title */}
               <div className="text-center space-y-1">
-                <h3 className="text-base font-bold uppercase tracking-wide underline">
-                  JADWAL PELAKSANAAN ASESMEN SUMATIF / CBT
+                <h3 className="text-base font-bold uppercase tracking-wide underline font-serif">
+                  JADWAL PELAKSANAAN {activeAssessmentName.replace(/\s*\([A-Z0-9]+\)\s*$/i, '').toUpperCase()} {cleanSemesterName.toUpperCase()}
                 </h3>
-                <div className="text-xs font-semibold">
-                  TAHUN PELAJARAN {settings.SCHOOL_YEAR || '2026/2027'} - SEMESTER {settings.SEMESTER?.toUpperCase() || 'GANJIL'}
+                <div className="text-xs font-semibold font-serif">
+                  TAHUN PELAJARAN {settings.SCHOOL_YEAR || '2026/2027'} - SEMESTER {cleanSemesterName.toUpperCase()}
                 </div>
               </div>
 
@@ -3857,26 +3941,67 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
               </table>
 
               {/* Signature Section */}
-              <div className="flex justify-between pt-8 text-xs break-inside-avoid">
-                <div className="text-center space-y-16">
-                  <div>
-                    Mengetahui,<br />
-                    Ketua Panitia Asesmen,
+              <div className="pt-6 text-xs break-inside-avoid" style={{ pageBreakInside: 'avoid', breakInside: 'avoid', width: '100%' }}>
+                <div
+                  className="flex justify-between items-start px-4"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'row',
+                    alignItems: 'flex-start',
+                    justifyContent: 'space-between',
+                    width: '100%',
+                    paddingLeft: '16px',
+                    paddingRight: '16px'
+                  }}
+                >
+                  <div
+                    className="w-64 text-center flex flex-col justify-between h-32"
+                    style={{
+                      width: '240px',
+                      maxWidth: '45%',
+                      textAlign: 'center',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between',
+                      height: '115px'
+                    }}
+                  >
+                    <div>
+                      <div className="font-medium">Mengetahui,</div>
+                      <div className="font-bold">Ketua Panitia Asesmen,</div>
+                    </div>
+                    <div className="mt-auto" style={{ marginTop: 'auto' }}>
+                      <div className="font-bold underline uppercase text-black">
+                        {settings.COMMITTEE_CHAIR_NAME || 'Ketua Panitia Ujian'}
+                      </div>
+                      <div className="font-mono text-[11px] text-slate-800">
+                        {settings.COMMITTEE_CHAIR_NIP ? (settings.COMMITTEE_CHAIR_NIP.startsWith('NBM') || settings.COMMITTEE_CHAIR_NIP.startsWith('NIP') ? settings.COMMITTEE_CHAIR_NIP : `NBM. ${settings.COMMITTEE_CHAIR_NIP}`) : 'NBM. 1281203'}
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="font-bold underline">Deni Kurniawan R., S.Pd</div>
-                    <div className="text-[11px]">NBM. 1281203</div>
-                  </div>
-                </div>
 
-                <div className="text-center space-y-16">
-                  <div>
-                    {settings.SCHOOL_CITY || 'Sumedang'}, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}<br />
-                    {settings.PRINCIPAL_TITLE || 'Kepala Madrasah'},
-                  </div>
-                  <div>
-                    <div className="font-bold underline">{settings.PRINCIPAL_NAME || 'Ai Sukaesih, S.Pd'}</div>
-                    <div className="text-[11px]">{settings.PRINCIPAL_NIP ? (settings.PRINCIPAL_NIP.startsWith('NBM') || settings.PRINCIPAL_NIP.startsWith('NIP') ? settings.PRINCIPAL_NIP : `NBM. ${settings.PRINCIPAL_NIP}`) : 'NBM. 1281201'}</div>
+                  <div
+                    className="w-64 text-center flex flex-col justify-between h-32"
+                    style={{
+                      width: '240px',
+                      maxWidth: '45%',
+                      textAlign: 'center',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between',
+                      height: '115px'
+                    }}
+                  >
+                    <div>
+                      <div>
+                        {(settings.SCHOOL_CITY || 'Sumedang').replace(/^Kabupaten\s+/i, '')}, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+                      </div>
+                      <div className="font-bold">{settings.PRINCIPAL_TITLE || 'Kepala Madrasah'},</div>
+                    </div>
+                    <div className="mt-auto" style={{ marginTop: 'auto' }}>
+                      <div className="font-bold underline uppercase text-black">{settings.PRINCIPAL_NAME || 'Ai Sukaesih, S.Pd'}</div>
+                      <div className="font-mono text-[11px] text-slate-800">{settings.PRINCIPAL_NIP ? (settings.PRINCIPAL_NIP.startsWith('NBM') || settings.PRINCIPAL_NIP.startsWith('NIP') ? settings.PRINCIPAL_NIP : `NBM. ${settings.PRINCIPAL_NIP}`) : 'NBM. 1281201'}</div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -3884,6 +4009,18 @@ export const CbtExamScheduleManager: React.FC<CbtExamScheduleManagerProps> = ({
           </div>
         </div>
       )}
+
+      {/* MODAL: CETAK JADWAL UJIAN (KOLOM NO, WAKTU, DURASI, KELAS TERDAFTAR, KETERANGAN) */}
+      <ExamSchedulePrintModal
+        isOpen={isSchedulePrintModalOpen}
+        onClose={() => setIsSchedulePrintModalOpen(false)}
+        exams={filteredExams}
+        classes={safeClasses}
+        subjects={safeSubjects}
+        assessmentTypes={safeAssessmentTypes}
+        settings={settings}
+        onShowToast={(msg) => showNotification('success', msg)}
+      />
 
       {/* MODAL: PRESENSI KEHADIRAN SEKOLAH & QR BARCODE HARIAN */}
       <DailySchoolPresenceModal

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Download,
   CheckCircle2,
@@ -15,11 +15,17 @@ import {
   TrendingUp,
   HelpCircle,
   BookOpen,
-  GraduationCap
+  GraduationCap,
+  BarChart3,
+  LineChart,
+  Sparkles
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { Attempt, Exam, User, ClassItem } from '../types';
+import { Attempt, Exam, User, ClassItem, Question } from '../types';
 import { resetStudentAttempt } from '../services/supabaseLmsStorage';
+import { listEntity, simulateExamAttempts } from '../services/lmsStorage';
+import { INITIAL_QUESTIONS } from '../data/initialData';
+import { ItemAnalysisView } from './ItemAnalysisView';
 
 interface ResultsViewProps {
   attempts: Attempt[];
@@ -27,6 +33,7 @@ interface ResultsViewProps {
   users: User[];
   classes: ClassItem[];
   currentUser: User;
+  questions?: Question[];
   isStudentOnly?: boolean;
   token?: string;
   onRefresh?: () => void;
@@ -41,10 +48,34 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   users,
   classes,
   currentUser,
+  questions,
   isStudentOnly = false,
   token = 'auth-token-demo',
   onRefresh
 }) => {
+  // Navigation Tabs State (Rekap Nilai vs Analisis Butir Soal)
+  const [activeTab, setActiveTab] = useState<'scores' | 'itemAnalysis'>('scores');
+
+  // Loaded Questions for psychometrics
+  const [loadedQuestions, setLoadedQuestions] = useState<Question[]>(questions || []);
+
+  useEffect(() => {
+    if (questions && questions.length > 0) {
+      setLoadedQuestions(questions);
+      return;
+    }
+    try {
+      const qList = listEntity(token, 'QUESTIONS');
+      if (qList && qList.length > 0) {
+        setLoadedQuestions(qList);
+      } else {
+        setLoadedQuestions(INITIAL_QUESTIONS);
+      }
+    } catch {
+      setLoadedQuestions(INITIAL_QUESTIONS);
+    }
+  }, [questions, token]);
+
   // Filters State
   const [selectedClassId, setSelectedClassId] = useState<string>('ALL');
   const [selectedExamId, setSelectedExamId] = useState<string>('ALL');
@@ -314,9 +345,80 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
         </div>
       </div>
 
-      {/* Summary Statistics Card */}
+      {/* Sub-Navigation Tabs (Teacher/Admin only) */}
       {!isStudentOnly && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+          <div className="flex items-center gap-1.5 p-1 bg-slate-100/90 rounded-2xl border border-slate-200 w-fit">
+            <button
+              type="button"
+              onClick={() => setActiveTab('scores')}
+              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-all cursor-pointer ${
+                activeTab === 'scores'
+                  ? 'bg-white text-blue-700 shadow-xs border border-slate-200/80'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Award className="w-4 h-4 text-blue-600" />
+              <span>Rekap Nilai Siswa</span>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                activeTab === 'scores' ? 'bg-blue-50 text-blue-700' : 'bg-slate-200 text-slate-700'
+              }`}>
+                {filteredAttempts.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('itemAnalysis')}
+              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-all cursor-pointer ${
+                activeTab === 'itemAnalysis'
+                  ? 'bg-white text-blue-700 shadow-xs border border-slate-200/80'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4 text-amber-600" />
+              <span>Analisis Butir Soal</span>
+              <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-200">
+                Tingkat Kesukaran & Daya Pembeda
+              </span>
+            </button>
+          </div>
+
+          {activeTab === 'scores' && selectedExamId !== 'ALL' && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('itemAnalysis')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold hover:bg-amber-100 transition-colors cursor-pointer w-fit"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+              <span>Buka Analisis Butir Ujian Ini →</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Main Content: Either Item Analysis View or Scores Table */}
+      {activeTab === 'itemAnalysis' ? (
+        <ItemAnalysisView
+          exams={exams}
+          questions={loadedQuestions}
+          attempts={attempts}
+          classes={classes}
+          users={users}
+          defaultExamId={selectedExamId !== 'ALL' ? selectedExamId : undefined}
+          token={token}
+          onSimulateAttempts={async (examId) => {
+            simulateExamAttempts(examId);
+            if (onRefresh) onRefresh();
+            showToast('success', '12 data responden simulasi berhasil dimuat untuk analisis butir soal!');
+          }}
+          onRefresh={onRefresh}
+        />
+      ) : (
+        <>
+          {/* Summary Statistics Card */}
+          {!isStudentOnly && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs">
             <div className="text-[11px] font-semibold text-slate-500 flex items-center gap-1.5">
               <Users className="w-3.5 h-3.5 text-blue-600" />
@@ -661,6 +763,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
           </table>
         </div>
       </div>
+      </>
+      )}
 
       {/* Confirmation Modal for Reset Attempt */}
       {resetModalAttempt && (

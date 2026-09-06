@@ -129,7 +129,7 @@ export const ExamStartConfirmationModal: React.FC<ExamStartConfirmationModalProp
               <div className="flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-[#0052CC]" />
                 <span>
-                  Jam: <b className="text-slate-800 font-semibold">{exam.startTime || '07:30'} WIB</b>
+                  Waktu: <b className="text-slate-800 font-semibold">{exam.startTime || '07:30'} s.d. {exam.endTime || '09:00'} WIB</b>
                 </span>
               </div>
               {exam.room && (
@@ -142,8 +142,14 @@ export const ExamStartConfirmationModal: React.FC<ExamStartConfirmationModalProp
                   Sesi: <span className="font-semibold text-slate-800">{exam.session}</span>
                 </div>
               )}
+              <div className="col-span-2 pt-1 border-t border-slate-200/60 text-[11px] text-amber-900 bg-amber-50/70 p-2 rounded-lg flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                <span>
+                  Batas Sesi: Pengerjaan harus diselesaikan sebelum pukul <b>{exam.endTime || '09:00'} WIB</b>. Akses otomatis dikunci setelah sesi berakhir.
+                </span>
+              </div>
               {exam.supervisor && (
-                <div className="col-span-2 flex items-center gap-1.5 text-slate-500 pt-1">
+                <div className="col-span-2 flex items-center gap-1.5 text-slate-500 pt-0.5">
                   <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
                   <span>
                     Pengawas: <span className="font-semibold text-slate-800">{exam.supervisor}</span>

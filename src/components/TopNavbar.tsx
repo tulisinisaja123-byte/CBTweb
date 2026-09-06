@@ -257,30 +257,6 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         {/* Live Real-time Status indicator */}
         <RealtimeIndicator />
 
-        {/* Supabase RLS Security Policy Button */}
-        {onOpenSupabaseRls && (
-          <button
-            type="button"
-            onClick={onOpenSupabaseRls}
-            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 text-white hover:bg-emerald-800 text-xs font-semibold shadow-xs transition-colors"
-            title="Keamanan Database & Aturan Row-Level Security (RLS) Supabase"
-          >
-            <ShieldCheck className="w-3.5 h-3.5 text-white" />
-            <span>Keamanan RLS</span>
-          </button>
-        )}
-
-        {/* View GAS Code Button */}
-        <button
-          type="button"
-          onClick={onOpenAppsScript}
-          className="hidden xl:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0052CC] text-white hover:bg-[#0047B3] text-xs font-semibold shadow-xs transition-colors"
-          title="Lihat Kode Google Apps Script Asli"
-        >
-          <FileCode className="w-3.5 h-3.5 text-white" />
-          <span>Salin Kode GAS</span>
-        </button>
-
         {/* Notification indicator */}
         <button
           type="button"

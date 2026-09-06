@@ -1,20 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { School, Lock, User as UserIcon, LogIn, Wrench, FileCode, CheckCircle2, ShieldAlert } from 'lucide-react';
-import { login, ensureInitialized, safeStorageSet, getSchoolSettings, subscribeToRealtimeChanges } from '../services/supabaseLmsStorage';
+import { School, Lock, User as UserIcon, LogIn, ShieldCheck, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { login, safeStorageSet, getSchoolSettings, subscribeToRealtimeChanges } from '../services/supabaseLmsStorage';
 import { User, SchoolSettings, DashboardData } from '../types';
 import { DEFAULT_SETTINGS } from '../data/initialData';
+import { MuhammadiyahLogoSvg, MaCikaramasLogoSvg } from './OfficialLogos';
 
 interface LoginViewProps {
   onLoginSuccess: (data: { token: string; user: User; settings: SchoolSettings; dashboard: DashboardData }) => void;
-  onOpenAppsScript: () => void;
+  onOpenAppsScript?: () => void;
 }
 
-export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onOpenAppsScript }) => {
+export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('Admin123!');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [resetMessage, setResetMessage] = useState('');
   const [settings, setSettings] = useState<SchoolSettings>(DEFAULT_SETTINGS);
 
   useEffect(() => {
@@ -34,17 +34,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onOpenApps
     };
   }, []);
 
-  const principalName = settings.PRINCIPAL_NAME || 'Ai Sukaesih, S.Pd';
   const schoolName = settings.SCHOOL_NAME || 'MAS MUHAMMADIYAH CIKARAMAS';
-  const principalInitials = principalName
-    .replace(/(S\.Pd|M\.Pd|Drs\.|Dr\.|H\.|Hj\.|M\.Ag|M\.Si)/gi, '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(w => w[0])
-    .join('')
-    .toUpperCase() || 'AS';
+  const schoolCity = settings.SCHOOL_CITY || 'Kabupaten Sumedang';
+  const schoolYear = settings.SCHOOL_YEAR || '2026/2027';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,139 +47,134 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onOpenApps
       safeStorageSet('lms_token', data.token);
       onLoginSuccess(data);
     } catch (err: any) {
-      setError(err.message || 'Login gagal.');
+      setError(err.message || 'Login gagal. Periksa username dan password Anda.');
     } finally {
       setLoading(false);
     }
   };
 
-  const setDemoAccount = (u: string, p: string) => {
-    setUsername(u);
-    setPassword(p);
-    setError('');
-  };
-
-  const handleResetData = async () => {
-    try {
-      await ensureInitialized(true);
-      const refreshed = await getSchoolSettings();
-      setSettings(refreshed);
-      setResetMessage(`Database berhasil diatur ke data awal pabrik (Kepala Madrasah: ${refreshed.PRINCIPAL_NAME || 'Ai Sukaesih, S.Pd'})!`);
-      setTimeout(() => setResetMessage(''), 4000);
-    } catch {
-      setError('Gagal mereset database.');
-    }
-  };
-
   return (
-    <div id="loginView" className="min-h-screen grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] bg-[#F1F3F5]">
-      {/* Art / Hero Section */}
-      <section className="login-art relative overflow-hidden p-8 lg:p-14 text-white flex flex-col justify-between bg-gradient-to-br from-[#071D49] via-[#003B8E] to-[#0052CC]">
-        {/* Subtle Background Watermark */}
-        <div className="absolute -bottom-10 -right-10 pointer-events-none select-none opacity-[0.06] text-right font-black uppercase leading-none">
-          <div className="text-6xl lg:text-8xl tracking-tight">{principalName}</div>
+    <div id="loginView" className="min-h-screen grid grid-cols-1 lg:grid-cols-[1.15fr_0.85fr] bg-[#F4F6F4]">
+      {/* Art / Hero Section: Nuansa Hijau Khas Madrasah & Muhammadiyah yang Profesional */}
+      <section className="login-art relative overflow-hidden p-8 lg:p-14 text-white flex flex-col justify-between bg-gradient-to-br from-[#032815] via-[#064e28] to-[#0a6e3b]">
+        
+        {/* Background Watermark Motto Madrasah (Bukan Nama Kepala) */}
+        <div className="absolute -bottom-10 -right-10 pointer-events-none select-none opacity-[0.04] text-right font-black uppercase leading-none">
+          <div className="text-6xl lg:text-8xl tracking-tight">IKHLAS BERAMAL</div>
           <div className="text-3xl lg:text-5xl tracking-widest mt-2">{schoolName}</div>
         </div>
 
+        {/* Subtle Decorative Geometric Pattern */}
+        <div className="absolute inset-0 opacity-[0.03] pointer-events-none bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:20px_20px]" />
+
         <div className="relative z-10">
           <div className="brand flex items-center gap-3 font-bold tracking-tight text-lg sm:text-xl">
-            <div className="brand-logo w-10 h-10 rounded-md bg-white text-[#0052CC] grid place-items-center shadow-sm">
-              <School className="w-5 h-5" />
+            <div className="brand-logo w-11 h-11 rounded-lg bg-white p-1 text-[#064e28] grid place-items-center shadow-md overflow-hidden shrink-0">
+              {settings.LOGO_URL === 'MUHAMMADIYAH_STANDARD' ? (
+                <MuhammadiyahLogoSvg size={36} className="w-9 h-9" />
+              ) : settings.LOGO_URL === '/logo-ma-cikaramas.svg' ? (
+                <MaCikaramasLogoSvg size={36} className="w-9 h-9" idSuffix="login" />
+              ) : settings.LOGO_URL ? (
+                <img src={settings.LOGO_URL} alt="Logo" className="w-9 h-9 object-contain" referrerPolicy="no-referrer" />
+              ) : (
+                <School className="w-6 h-6 text-[#064e28]" />
+              )}
             </div>
-            <span>CBT {schoolName}</span>
+            <div>
+              <div className="text-xs uppercase font-semibold tracking-wider text-emerald-300 leading-tight">
+                Computer-Based Test & Android
+              </div>
+              <span className="text-white font-extrabold text-base sm:text-lg tracking-tight">
+                CBT {schoolName}
+              </span>
+            </div>
           </div>
         </div>
 
         <div className="login-hero relative z-10 max-w-xl my-8">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 text-white text-xs font-medium mb-4 border border-white/20">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-emerald-950/60 text-emerald-200 text-xs font-medium mb-4 border border-emerald-500/30 backdrop-blur-xs">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            {schoolName} • CBT Edition v1.0.3
+            <span>Tahun Pelajaran {schoolYear} • Sistem Penilaian Terstandar</span>
           </div>
-          <h1 className="text-3xl sm:text-5xl font-bold leading-tight tracking-tight mb-4 text-white">
-            Kelola pembelajaran dan ujian dalam satu aplikasi.
+
+          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold leading-tight tracking-tight mb-4 text-white">
+            Portal Asesmen & Ujian Madrasah Terpadu
           </h1>
-          <p className="text-base sm:text-lg leading-relaxed text-white/80 max-w-lg mb-6">
-            Platform CBT terpadu {schoolName}. Dilengkapi CBT Anti-Curang (Lockdown Mode), Bank Soal, Koreksi Uraian, dan Sinkronisasi Real-Time Otomatis.
+
+          <p className="text-sm sm:text-base leading-relaxed text-emerald-100/90 max-w-lg mb-6 font-normal">
+            Platform asesmen digital {schoolName}. Dilengkapi proteksi anti-curang (Lockdown Mode), sinkronisasi nilai realtime, bank soal terstandar, dan pencetakan dokumen resmi.
           </p>
 
-          <div className="feature-pills flex flex-wrap gap-2.5 mb-6">
-            <span className="feature-pill px-3.5 py-1.5 rounded-full bg-white/10 border border-white/20 text-xs font-medium text-white/95">
+          <div className="feature-pills flex flex-wrap gap-2.5 mb-8">
+            <span className="feature-pill px-3 py-1.5 rounded-full bg-white/10 border border-white/15 text-xs font-medium text-white/95 backdrop-blur-xs">
               ⚡ Real-time Online
             </span>
-            <span className="feature-pill px-3.5 py-1.5 rounded-full bg-white/10 border border-white/20 text-xs font-medium text-white/95">
-              🛡️ Lockdown Mode
+            <span className="feature-pill px-3 py-1.5 rounded-full bg-white/10 border border-white/15 text-xs font-medium text-white/95 backdrop-blur-xs">
+              🛡️ Anti-Curang Lockdown
             </span>
-            <span className="feature-pill px-3.5 py-1.5 rounded-full bg-white/10 border border-white/20 text-xs font-medium text-white/95">
-              📊 Live Monitoring
+            <span className="feature-pill px-3 py-1.5 rounded-full bg-white/10 border border-white/15 text-xs font-medium text-white/95 backdrop-blur-xs">
+              📊 Koreksi Soal Otomatis
             </span>
-            <span className="feature-pill px-3.5 py-1.5 rounded-full bg-white/10 border border-white/20 text-xs font-medium text-white/95">
-              📁 Import / Export Excel & Word
-            </span>
-            <span className="feature-pill px-3.5 py-1.5 rounded-full bg-white/10 border border-white/20 text-xs font-medium text-white/95">
+            <span className="feature-pill px-3 py-1.5 rounded-full bg-white/10 border border-white/15 text-xs font-medium text-white/95 backdrop-blur-xs">
               🖨️ Cetak Kartu & Berita Acara
             </span>
           </div>
 
-          {/* Pejabat Sekolah / Latar Lembaga Dinamis */}
-          <div className="p-3.5 rounded-lg bg-white/10 border border-white/15 backdrop-blur-xs flex items-center gap-3.5 max-w-md">
-            <div className="w-10 h-10 rounded-full bg-white/20 grid place-items-center text-white font-bold text-sm flex-shrink-0">
-              {principalInitials}
+          {/* Profil Satuan Pendidikan Resmi */}
+          <div className="p-4 rounded-xl bg-white/10 border border-white/15 backdrop-blur-xs flex items-center gap-4 max-w-md shadow-sm">
+            <div className="w-11 h-11 rounded-lg bg-emerald-500/20 border border-emerald-400/30 grid place-items-center text-emerald-200 font-bold flex-shrink-0">
+              <School className="w-5 h-5 text-emerald-100" />
             </div>
             <div className="text-xs">
-              <div className="text-white/70 uppercase tracking-wider font-semibold text-[10px]">
-                Penanggung Jawab / Kepala Madrasah
+              <div className="text-emerald-200/90 uppercase tracking-wider font-semibold text-[10px]">
+                Satuan Pendidikan Penyelenggara
               </div>
-              <div className="font-bold text-white text-sm">{principalName}</div>
-              <div className="text-blue-200 text-[11px]">{schoolName}</div>
+              <div className="font-bold text-white text-sm tracking-tight">{schoolName}</div>
+              <div className="text-emerald-300/90 text-[11px] mt-0.5">{schoolCity} • Jawa Barat</div>
             </div>
           </div>
         </div>
 
-        <div className="login-footer relative z-10 flex flex-wrap items-center justify-between gap-4 text-xs text-white/70 pt-4 border-t border-white/15">
-          <span>CBT {schoolName} • {principalName}</span>
-          <button
-            type="button"
-            onClick={onOpenAppsScript}
-            className="inline-flex items-center gap-1.5 text-white/90 hover:text-white bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-md transition-colors border border-white/20"
-          >
-            <FileCode className="w-3.5 h-3.5 text-blue-200" />
-            <span>Lihat Kode Sumber Apps Script</span>
-          </button>
+        {/* Footer: Bebas Nama Kepala & Bebas Tombol Kode */}
+        <div className="login-footer relative z-10 flex flex-wrap items-center justify-between gap-3 text-xs text-emerald-200/80 pt-4 border-t border-white/15">
+          <span>CBT {schoolName} • Portal Asesmen Berbasis Komputer & Android</span>
+          <span className="font-medium text-emerald-300">TP {schoolYear}</span>
         </div>
       </section>
 
-      {/* Login Form Panel */}
-      <section className="login-panel flex items-center justify-center p-6 sm:p-10">
-        <div className="login-card w-full max-w-md bg-white border border-[#DEE2E6] rounded-lg p-6 sm:p-8 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-xl font-bold text-[#1A1C1E]">Selamat Datang</h2>
-            <div className="w-8 h-8 rounded-md bg-[#E8F0FE] flex items-center justify-center text-[#0052CC]">
-              <School className="w-4 h-4" />
+      {/* Login Form Panel: Elegan, Bersih, dan Profesional */}
+      <section className="login-panel flex items-center justify-center p-6 sm:p-12">
+        <div className="login-card w-full max-w-md bg-white border border-slate-200 rounded-2xl p-6 sm:p-10 shadow-lg">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                Masuk ke Portal
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Silakan masukkan kredensial akun Anda
+              </p>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shadow-2xs">
+              <ShieldCheck className="w-5 h-5 text-emerald-700" />
             </div>
           </div>
-          <p className="text-xs sm:text-sm text-[#6C757D] mb-6">
-            Masuk ke portal CBT MAS MUHAMMADIYAH CIKARAMAS untuk guru, siswa, atau administrator.
-          </p>
+
+          <div className="h-0.5 w-12 bg-emerald-600 rounded-full mb-6" />
 
           {error && (
-            <div className="mb-5 p-3 rounded-md bg-[#FCE8E6] border border-[#FAD2CF] text-[#C5221F] text-xs flex items-center gap-2">
-              <ShieldAlert className="w-4 h-4 flex-shrink-0 text-[#C5221F]" />
+            <div className="mb-5 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2.5">
+              <ShieldAlert className="w-4 h-4 flex-shrink-0 text-rose-600" />
               <span>{error}</span>
-            </div>
-          )}
-
-          {resetMessage && (
-            <div className="mb-5 p-3 rounded-md bg-[#E6F4EA] border border-[#CEEAD6] text-[#137333] text-xs flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-[#137333]" />
-              <span>{resetMessage}</span>
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="field">
-              <label className="block text-xs font-medium text-[#1A1C1E] mb-1.5">Username / NIS / NIP</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                Username / NISN / NIP
+              </label>
               <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#6C757D]">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">
                   <UserIcon className="w-4 h-4" />
                 </span>
                 <input
@@ -195,17 +182,19 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onOpenApps
                   type="text"
                   value={username}
                   onChange={e => setUsername(e.target.value)}
-                  className="w-full pl-10 pr-3.5 py-2 border border-[#CED4DA] rounded-md text-xs sm:text-sm outline-none focus:border-[#0052CC] focus:ring-1 focus:ring-[#0052CC] transition-all text-[#1A1C1E] bg-white"
-                  placeholder="Masukkan username"
+                  className="w-full pl-10 pr-3.5 py-2.5 border border-slate-300 rounded-lg text-xs sm:text-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 transition-all text-slate-900 bg-white"
+                  placeholder="Masukkan username Anda"
                   required
                 />
               </div>
             </div>
 
             <div className="field">
-              <label className="block text-xs font-medium text-[#1A1C1E] mb-1.5">Password</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                Kata Sandi (Password)
+              </label>
               <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#6C757D]">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">
                   <Lock className="w-4 h-4" />
                 </span>
                 <input
@@ -213,8 +202,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onOpenApps
                   type="password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  className="w-full pl-10 pr-3.5 py-2 border border-[#CED4DA] rounded-md text-xs sm:text-sm outline-none focus:border-[#0052CC] focus:ring-1 focus:ring-[#0052CC] transition-all text-[#1A1C1E] bg-white"
-                  placeholder="Masukkan password"
+                  className="w-full pl-10 pr-3.5 py-2.5 border border-slate-300 rounded-lg text-xs sm:text-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 transition-all text-slate-900 bg-white"
+                  placeholder="Masukkan kata sandi"
                   required
                 />
               </div>
@@ -223,78 +212,21 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onOpenApps
             <button
               type="submit"
               disabled={loading}
-              className="w-full mt-2 py-2.5 px-4 rounded-md bg-[#0052CC] hover:bg-[#0047B3] text-white font-medium text-xs sm:text-sm flex items-center justify-center gap-2 transition-colors shadow-xs disabled:opacity-50"
+              className="w-full mt-3 py-3 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all shadow-md hover:shadow-lg disabled:opacity-50 cursor-pointer"
             >
-              <LogIn className="w-4 h-4" />
-              <span>{loading ? 'Memeriksa...' : 'Masuk ke CBT'}</span>
+              <LogIn className="w-4 h-4 text-white" />
+              <span>{loading ? 'Memverifikasi...' : 'Masuk ke Sistem CBT'}</span>
             </button>
           </form>
 
-          {/* Demo account selector pills */}
-          <div className="mt-6 pt-5 border-t border-[#DEE2E6]">
-            <p className="text-xs font-medium text-[#6C757D] mb-2.5">Pilih Akun Demo Cepat (1 Sampel):</p>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => setDemoAccount('admin', 'Admin123!')}
-                className={`px-2.5 py-2 rounded-md text-xs font-medium border transition-colors text-left ${
-                  username === 'admin'
-                    ? 'bg-[#0052CC] text-white border-[#0052CC]'
-                    : 'bg-[#F8F9FA] text-[#1A1C1E] border-[#DEE2E6] hover:bg-[#E9ECEF]'
-                }`}
-              >
-                <div className="font-bold">Admin</div>
-                <div className="text-[10px] opacity-80 truncate">admin / Admin123!</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setDemoAccount('guru01', 'Guru123!')}
-                className={`px-2.5 py-2 rounded-md text-xs font-medium border transition-colors text-left ${
-                  username === 'guru01'
-                    ? 'bg-[#0052CC] text-white border-[#0052CC]'
-                    : 'bg-[#F8F9FA] text-[#1A1C1E] border-[#DEE2E6] hover:bg-[#E9ECEF]'
-                }`}
-              >
-                <div className="font-bold">Guru</div>
-                <div className="text-[10px] opacity-80 truncate">guru01 / Guru123!</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setDemoAccount('siswa01', 'Siswa123!')}
-                className={`px-2.5 py-2 rounded-md text-xs font-medium border transition-colors text-left ${
-                  username === 'siswa01'
-                    ? 'bg-[#0052CC] text-white border-[#0052CC]'
-                    : 'bg-[#F8F9FA] text-[#1A1C1E] border-[#DEE2E6] hover:bg-[#E9ECEF]'
-                }`}
-              >
-                <div className="font-bold">Siswa</div>
-                <div className="text-[10px] opacity-80 truncate">siswa01 / Siswa123!</div>
-              </button>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={handleResetData}
-                className="inline-flex items-center gap-1 text-xs text-[#6C757D] hover:text-[#0052CC] font-medium transition-colors"
-                title="Atur ulang database ke pengaturan pabrik (1 sampel)"
-              >
-                <Wrench className="w-3.5 h-3.5" />
-                <span>Atur Awal / Pabrik Data</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onOpenAppsScript}
-                className="inline-flex items-center gap-1 text-xs text-[#0052CC] hover:underline font-medium"
-              >
-                <FileCode className="w-3.5 h-3.5" />
-                <span>Kode Script</span>
-              </button>
-            </div>
+          {/* Security & Access Protection Notice */}
+          <div className="mt-8 pt-5 border-t border-slate-100 flex items-center gap-3 text-slate-500 text-xs">
+            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span className="text-[11px] leading-relaxed">
+              Hak akses terlindungi dengan enkripsi keamanan terpusat untuk Administrator, Dewan Guru, dan Peserta Didik.
+            </span>
           </div>
+
         </div>
       </section>
     </div>

@@ -211,9 +211,21 @@ export interface SchoolSettings {
   PRINCIPAL_NIP?: string; // e.g. '1281201' (NBM) or NIP
   SCHOOL_YEAR: string;
   SEMESTER: string;
+  DEFAULT_ASSESSMENT_NAME?: string; // e.g. 'Sumatif Akhir Semester (SAS)'
+  ASSESSMENT_TITLE?: string;
   CURRICULUM?: CurriculumType; // 'MERDEKA' | 'K13'
   PASSWORD_SALT?: string;
   APP_VERSION?: string;
+  // Kop Surat Dokumen Resmi
+  KOP_HEADER_1?: string;
+  KOP_HEADER_2?: string;
+  KOP_NSM?: string;
+  KOP_NPSN?: string;
+  KOP_AKREDITASI?: string;
+  KOP_KOTA_KODEPOS?: string;
+  KOP_TELEPON?: string;
+  KOP_EMAIL?: string;
+  KOP_WEBSITE?: string;
   [key: string]: string | undefined;
 }
 

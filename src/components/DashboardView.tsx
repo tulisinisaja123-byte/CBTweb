@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   Users,
   GraduationCap,
@@ -23,10 +23,12 @@ import {
   X,
   QrCode
 } from 'lucide-react';
-import { DashboardData, User, AvailableExamItem } from '../types';
-import { getAvailableExamsForUser } from '../services/lmsStorage';
+import { DashboardData, User, AvailableExamItem, SchoolSettings } from '../types';
+import { getAvailableExamsForUser, getSchoolSettings as getLocalSchoolSettings } from '../services/lmsStorage';
+import { DEFAULT_SETTINGS } from '../data/initialData';
 import { ExamStartConfirmationModal } from './ExamStartConfirmationModal';
 import { SvgQrCode, SvgBarcode } from './CetakDokumenUjian';
+import { printElementReliable } from '../utils/printHelper';
 
 interface DashboardViewProps {
   user: User;
@@ -35,6 +37,7 @@ interface DashboardViewProps {
   onNavigate: (page: string) => void;
   onRefresh: () => void;
   onStartExam?: (examId: string, tokenInput?: string) => Promise<void> | void;
+  settings?: SchoolSettings;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -43,12 +46,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   classNameHelper,
   onNavigate,
   onRefresh,
-  onStartExam
+  onStartExam,
+  settings
 }) => {
   const isStudent = user.ROLE === 'STUDENT';
   const [confirmExamModal, setConfirmExamModal] = useState<AvailableExamItem | null>(null);
   const [isStartingExam, setIsStartingExam] = useState(false);
   const [showStudentCardModal, setShowStudentCardModal] = useState(false);
+  const studentCardRef = useRef<HTMLDivElement>(null);
+
+  // Dynamic school settings and school year
+  const schoolSettings: SchoolSettings = useMemo(() => {
+    const base = getLocalSchoolSettings();
+    return {
+      ...DEFAULT_SETTINGS,
+      ...base,
+      ...(settings || {})
+    };
+  }, [settings]);
+
+  const schoolYear = schoolSettings.SCHOOL_YEAR || DEFAULT_SETTINGS.SCHOOL_YEAR || '2026/2027';
 
   // Compute student exam schedules sorted chronologically by exam date and start time
   const sortedStudentSchedules = useMemo(() => {
@@ -785,14 +802,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="print-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto animate-fadeIn">
           <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden my-auto">
             {/* Modal Header */}
-            <div className="no-print px-4 sm:px-5 py-3.5 sm:py-4 bg-gradient-to-r from-[#003B99] to-[#0052CC] text-white flex items-center justify-between">
+            <div className="no-print px-4 sm:px-5 py-3.5 sm:py-4 bg-gradient-to-r from-emerald-800 to-emerald-700 text-white flex items-center justify-between">
               <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
                 <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center shrink-0">
                   <CreditCard className="w-4 h-4 text-white" />
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-xs sm:text-sm font-bold tracking-tight truncate">Kartu Peserta Ujian Asesmen CBT</h3>
-                  <p className="text-[10px] sm:text-[11px] text-blue-100 truncate">MAS MUHAMMADIYAH CIKARAMAS • TP 2026/2027</p>
+                  <p className="text-[10px] sm:text-[11px] text-emerald-100 truncate">{schoolSettings.SCHOOL_NAME || 'MAS MUHAMMADIYAH CIKARAMAS'} • TP {schoolYear}</p>
                 </div>
               </div>
               <button
@@ -807,20 +824,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             {/* Modal Body: Official Card Design */}
             <div className="print-modal-body p-2.5 sm:p-5 space-y-3 sm:space-y-4 max-h-[82vh] sm:max-h-[78vh] overflow-y-auto">
-              <div className="border-2 border-[#1A1C1E] rounded-xl p-3 sm:p-4 bg-white shadow-xs space-y-3 font-sans">
+              <div ref={studentCardRef} className="border-2 border-[#1A1C1E] rounded-xl p-3 sm:p-4 bg-white shadow-xs space-y-3 font-sans">
                 {/* Kop Kartu */}
                 <div className="text-center pb-2 border-b-2 border-[#1A1C1E]">
                   <h4 className="text-[9px] sm:text-[10px] font-bold tracking-wider uppercase text-[#495057]">
-                    KEMENTERIAN AGAMA REPUBLIK INDONESIA
+                    {schoolSettings.KOP_HEADER_1 || 'KEMENTERIAN AGAMA REPUBLIK INDONESIA'}
                   </h4>
                   <h3 className="text-xs sm:text-sm font-black text-[#1A1C1E] tracking-tight uppercase leading-snug">
-                    MAS MUHAMMADIYAH CIKARAMAS
+                    {schoolSettings.SCHOOL_NAME || 'MAS MUHAMMADIYAH CIKARAMAS'}
                   </h3>
                   <p className="text-[9px] sm:text-[10px] text-[#495057] leading-tight mt-0.5">
-                    Jl. Raya Cikaramas - Wado No. 12, Tanjungmedar, Sumedang 45354
+                    {schoolSettings.SCHOOL_ADDRESS || 'Jl. Raya Cikaramas - Wado No. 12, Tanjungmedar, Sumedang 45354'}
                   </p>
-                  <div className="inline-block mt-1 px-2.5 py-0.5 bg-[#0052CC] text-white rounded font-bold text-[9px] sm:text-[10px] uppercase tracking-wider">
-                    KARTU PESERTA UJIAN ASESMEN CBT TP 2026/2027
+                  <div className="inline-block mt-1 px-2.5 py-0.5 bg-emerald-700 text-white rounded font-bold text-[9px] sm:text-[10px] uppercase tracking-wider">
+                    KARTU PESERTA UJIAN ASESMEN CBT TP {schoolYear}
                   </div>
                 </div>
 
@@ -843,7 +860,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     {/* QR Code - Mobile Position: Docked at top-right alongside photo to prevent overlapping biodata */}
                     <div className="sm:hidden flex flex-col items-center bg-white p-1.5 rounded-md border border-slate-200 shadow-2xs">
                       <SvgQrCode value={`CBT-MAS-CIKARAMAS|${user.USERNAME}|${user.NAME}|${user.CLASS_ID}`} size={54} />
-                      <span className="text-[8px] font-mono font-bold text-[#0052CC] mt-0.5">VERIFIKASI</span>
+                      <span className="text-[8px] font-mono font-bold text-emerald-800 mt-0.5">VERIFIKASI</span>
                     </div>
                   </div>
 
@@ -884,7 +901,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   {/* QR Code on Desktop (hidden on mobile to prevent overlapping) */}
                   <div className="hidden sm:flex shrink-0 flex-col items-center bg-slate-50 p-2 rounded-lg border border-slate-200">
                     <SvgQrCode value={`CBT-MAS-CIKARAMAS|${user.USERNAME}|${user.NAME}|${user.CLASS_ID}`} size={60} />
-                    <span className="text-[8px] font-mono font-bold text-[#0052CC] mt-1">VERIFIKASI</span>
+                    <span className="text-[8px] font-mono font-bold text-emerald-800 mt-1">VERIFIKASI</span>
                   </div>
                 </div>
 
@@ -916,7 +933,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                               <td className="p-1.5 text-center text-slate-500 font-medium">{idx + 1}</td>
                               <td className="p-1.5 font-bold text-slate-800">{item.title}</td>
                               <td className="p-1.5 text-center text-slate-600">{item.date || '-'}</td>
-                              <td className="p-1.5 text-center font-mono font-medium text-[#0052CC]">
+                              <td className="p-1.5 text-center font-mono font-medium text-emerald-800">
                                 {item.startTime || '07:30'} WIB
                               </td>
                               <td className="p-1.5 text-center text-slate-600">{item.duration} Menit</td>
@@ -938,13 +955,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     * Bawa kartu ini saat pelaksanaan asesmen CBT. Jangan membagikan akun dan password kepada orang lain.
                   </div>
                   <div className="text-center min-w-[150px]">
-                    <p className="text-[10px]">Sumedang, Juli 2026</p>
-                    <p className="font-semibold text-[10px]">Kepala Madrasah,</p>
+                    <p className="text-[10px]">{(schoolSettings.SCHOOL_CITY || 'Sumedang').replace(/^Kabupaten\s+/i, '')}, {new Date().toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}</p>
+                    <p className="font-semibold text-[10px]">{schoolSettings.PRINCIPAL_TITLE || 'Kepala Madrasah'},</p>
                     <div className="h-8 sm:h-10 flex items-center justify-center">
                       <span className="text-[9px] italic text-slate-400">[Ttd & Cap Digital]</span>
                     </div>
-                    <p className="font-bold underline text-[10px]">Ai Sukaesih, S.Pd</p>
-                    <p className="text-[9px] text-slate-500">NIP. 1281201</p>
+                    <p className="font-bold underline text-[10px]">{schoolSettings.PRINCIPAL_NAME || 'Ai Sukaesih, S.Pd'}</p>
+                    <p className="text-[9px] text-slate-500">NBM. {schoolSettings.PRINCIPAL_NIP || '1281201'}</p>
                   </div>
                 </div>
               </div>
@@ -958,7 +975,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={() => {
+                    if (studentCardRef.current) {
+                      printElementReliable(studentCardRef.current, {
+                        title: `Kartu_Peserta_${user.NAME}`,
+                        paperSize: 'A4',
+                        orientation: 'portrait'
+                      });
+                    } else {
+                      window.print();
+                    }
+                  }}
                   className="flex-1 sm:flex-initial px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
                   title="Cetak langsung atau simpan sebagai file PDF"
                 >

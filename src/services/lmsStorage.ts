@@ -28,6 +28,7 @@ import {
   INITIAL_CLASSES,
   INITIAL_EXAMS,
   INITIAL_QUESTIONS,
+  INITIAL_ATTEMPTS,
   INITIAL_SUBJECTS,
   INITIAL_USERS
 } from '../data/initialData';
@@ -197,8 +198,17 @@ export function safeStorageSet(key: string, value: string): void {
     if (typeof window !== 'undefined' && 'localStorage' in window && window.localStorage) {
       window.localStorage.setItem(key, value);
     }
-  } catch {
-    // localStorage write blocked
+  } catch (err) {
+    console.warn('safeStorageSet warning for key:', key, err);
+    try {
+      if (typeof window !== 'undefined' && 'localStorage' in window && window.localStorage) {
+        // Bersihkan data log aktivitas lama jika kuota penyimpanan browser hampir habis
+        window.localStorage.removeItem('lms_activity');
+        window.localStorage.setItem(key, value);
+      }
+    } catch {
+      // fallback ke memory store
+    }
   }
   memoryStore[key] = value;
 }
@@ -286,7 +296,7 @@ export function ensureInitialized(forceDemo = false): void {
         const cleanQuestions = currentQuestions.filter(q => !q.QUESTION?.toLowerCase().includes('pemrograman web') && !q.ID.startsWith('DUMMY-'));
         setStorage(STORAGE_KEYS.QUESTIONS, cleanQuestions);
       }
-      setStorage(STORAGE_KEYS.ATTEMPTS, []);
+      setStorage(STORAGE_KEYS.ATTEMPTS, INITIAL_ATTEMPTS);
       setStorage(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
       setStorage(STORAGE_KEYS.SESSIONS, forceDemo ? [] : existingSessions);
       setStorage(STORAGE_KEYS.ACTIVITY, []);
@@ -336,9 +346,37 @@ export function ensureInitialized(forceDemo = false): void {
         setStorage(STORAGE_KEYS.SESSION_PRESETS, DEFAULT_SESSION_PRESETS, false);
       }
 
-      // Ensure school settings have principal fields
+      // Ensure attempts are initialized if empty
+      const existingAttempts = getStorage<Attempt[]>(STORAGE_KEYS.ATTEMPTS, []);
+      if (!existingAttempts || existingAttempts.length === 0) {
+        setStorage(STORAGE_KEYS.ATTEMPTS, INITIAL_ATTEMPTS);
+      }
+      // Ensure UJ-001 has complete question set
+      const existingQuestionsAll = getStorage<Question[]>(STORAGE_KEYS.QUESTIONS, []);
+      if (existingQuestionsAll.filter(q => q.EXAM_ID === 'UJ-001' || q.BANK_ID === 'UJ-001').length < 5) {
+        const otherQuestions = existingQuestionsAll.filter(q => q.EXAM_ID !== 'UJ-001' && q.BANK_ID !== 'UJ-001');
+        setStorage(STORAGE_KEYS.QUESTIONS, [...otherQuestions, ...INITIAL_QUESTIONS]);
+      }
+
+      // Ensure school settings have active school year, semester, and principal fields
       const currentSettings = getStorage<SchoolSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
       let settingsChanged = false;
+      if (!currentSettings.SCHOOL_YEAR || currentSettings.SCHOOL_YEAR === '2024/2025' || currentSettings.SCHOOL_YEAR === '2025/2026') {
+        currentSettings.SCHOOL_YEAR = '2026/2027';
+        settingsChanged = true;
+      }
+      if (!currentSettings.SEMESTER) {
+        currentSettings.SEMESTER = '1 (Ganjil)';
+        settingsChanged = true;
+      }
+      if (!currentSettings.DEFAULT_ASSESSMENT_NAME) {
+        currentSettings.DEFAULT_ASSESSMENT_NAME = 'Sumatif Akhir Semester (SAS)';
+        settingsChanged = true;
+      }
+      if (!currentSettings.ASSESSMENT_TITLE) {
+        currentSettings.ASSESSMENT_TITLE = currentSettings.DEFAULT_ASSESSMENT_NAME || 'Sumatif Akhir Semester (SAS)';
+        settingsChanged = true;
+      }
       if (!currentSettings.PRINCIPAL_TITLE) {
         currentSettings.PRINCIPAL_TITLE = 'Kepala Madrasah';
         settingsChanged = true;
@@ -464,6 +502,23 @@ export function ensureInitialized(forceDemo = false): void {
     if (subjectsUpdated) {
       setStorage(STORAGE_KEYS.SUBJECTS, healedSubjects);
     }
+
+    // Auto-heal missing END_TIME for all exams
+    const storedExams = getStorage<Exam[]>(STORAGE_KEYS.EXAMS, []);
+    let examsFixed = false;
+    const healedExams = storedExams.map(ex => {
+      if (!ex.END_TIME || !ex.END_TIME.trim()) {
+        examsFixed = true;
+        return {
+          ...ex,
+          END_TIME: calculateEndTime(ex.START_TIME, ex.DURATION_MIN)
+        };
+      }
+      return ex;
+    });
+    if (examsFixed) {
+      setStorage(STORAGE_KEYS.EXAMS, healedExams);
+    }
   } catch (err) {
     console.warn('ensureInitialized fallback error', err);
   }
@@ -530,7 +585,7 @@ export function login(usernameInput: string, passwordInput: string) {
   return {
     token,
     user: sanitizeUser(user),
-    settings: getStorage<SchoolSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS),
+    settings: getSchoolSettings(),
     dashboard: getDashboardDataForUser(user)
   };
 }
@@ -541,7 +596,7 @@ export function restoreSession(token: string) {
   return {
     token,
     user: sanitizeUser(auth.user),
-    settings: getStorage<SchoolSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS),
+    settings: getSchoolSettings(),
     dashboard: getDashboardDataForUser(auth.user)
   };
 }
@@ -2088,6 +2143,8 @@ export function getLookupData(token?: string) {
     classes = allClasses.filter(c => c.ID === authUser.CLASS_ID);
   }
 
+  const allQuestions = getStorage<Question[]>(STORAGE_KEYS.QUESTIONS, []);
+
   return {
     users,
     allUsers,
@@ -2097,9 +2154,80 @@ export function getLookupData(token?: string) {
     allSubjects,
     exams,
     allExams,
+    questions: allQuestions,
     assessmentTypes: allAssessmentTypes,
     questionBanks: getQuestionBanks()
   };
+}
+
+export function simulateExamAttempts(examId: string): Attempt[] {
+  const allQuestions = getStorage<Question[]>(STORAGE_KEYS.QUESTIONS, []);
+  const examQuestions = allQuestions.filter(q => q.EXAM_ID === examId || q.BANK_ID === examId);
+  if (examQuestions.length === 0) {
+    throw new Error('Tidak ada butir soal pada ujian ini untuk disimulasikan.');
+  }
+
+  const allUsers = getStorage<User[]>(STORAGE_KEYS.USERS, []);
+  const allAttempts = getStorage<Attempt[]>(STORAGE_KEYS.ATTEMPTS, []);
+  const students = allUsers.filter(u => u.ROLE === 'STUDENT');
+  const candidateStudents = students.length >= 6 ? students.slice(0, 12) : INITIAL_USERS.filter(u => u.ROLE === 'STUDENT').slice(0, 12);
+
+  const simulatedAttempts: Attempt[] = candidateStudents.map((st, idx) => {
+    // Upper group (idx 0-4): higher proficiency
+    // Middle group (idx 5-8): medium proficiency
+    // Lower group (idx 9-11): lower proficiency
+    const baseProficiency = idx < 5 ? 0.85 : idx < 9 ? 0.60 : 0.35;
+    const answersMap: Record<string, string> = {};
+    let correctCount = 0;
+
+    examQuestions.forEach((q, qIdx) => {
+      const key = String(q.ANSWER || 'A').trim().toUpperCase();
+      const options = ['A', 'B', 'C', 'D'];
+      if (q.OPTION_E) options.push('E');
+      const distractors = options.filter(o => o !== key);
+
+      // Vary question difficulty slightly
+      const difficultyMod = qIdx % 3 === 0 ? -0.2 : qIdx % 3 === 1 ? 0.1 : 0;
+      const prob = Math.max(0.15, Math.min(0.95, baseProficiency + difficultyMod));
+
+      const isCorrect = Math.random() < prob;
+      if (isCorrect) {
+        answersMap[q.ID] = key;
+        correctCount++;
+      } else {
+        const chosen = distractors[Math.floor(Math.random() * distractors.length)] || 'A';
+        answersMap[q.ID] = chosen;
+      }
+    });
+
+    const score = Math.round((correctCount / examQuestions.length) * 100);
+
+    return {
+      ID: `SIM-${examId}-${st.ID}`,
+      EXAM_ID: examId,
+      USER_ID: st.ID,
+      STARTED_AT: new Date(Date.now() - 3600000 + idx * 60000).toISOString(),
+      SUBMITTED_AT: new Date(Date.now() - 600000 + idx * 60000).toISOString(),
+      SCORE: score,
+      MAX_SCORE: 100,
+      STATUS: 'SUBMITTED',
+      VIOLATIONS: idx === 4 ? 1 : 0,
+      PROGRESS: 100,
+      ANSWERS_JSON: JSON.stringify(answersMap),
+      ESSAY_SCORES_JSON: '{}',
+      LAST_ACTIVITY: new Date().toISOString()
+    };
+  });
+
+  const remainingAttempts = allAttempts.filter(a => a.EXAM_ID !== examId);
+  const updatedAttempts = [...remainingAttempts, ...simulatedAttempts];
+  setStorage(STORAGE_KEYS.ATTEMPTS, updatedAttempts);
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('LMS_ATTEMPTS_CHANGED'));
+  }
+
+  return updatedAttempts;
 }
 
 export function resetAssessmentTypes(token: string, curriculum: 'MERDEKA' | 'K13'): AssessmentType[] {
@@ -2145,9 +2273,39 @@ export function getLocalDateYMD(d: Date = new Date()): string {
 }
 
 /**
+ * Menghitung jam selesai berdasarkan jam mulai dan durasi pengerjaan (menit)
+ */
+export function calculateEndTime(startTimeStr?: string, durationMin?: number): string {
+  const start = (startTimeStr || '07:30').trim();
+  const duration = typeof durationMin === 'number' && durationMin > 0 ? durationMin : 90;
+  const parts = start.split(':');
+  if (parts.length >= 2) {
+    const startHour = parseInt(parts[0], 10);
+    const startMinute = parseInt(parts[1], 10);
+    if (!isNaN(startHour) && !isNaN(startMinute)) {
+      const totalStartMin = startHour * 60 + startMinute;
+      const totalEndMin = totalStartMin + duration;
+      const endHour = Math.floor(totalEndMin / 60) % 24;
+      const endMinute = totalEndMin % 60;
+      return `${String(endHour).padStart(2, '0')}:${String(endMinute).padStart(2, '0')}`;
+    }
+  }
+  return '09:00';
+}
+
+/**
+ * Format rentang waktu ujian, contoh: "07:30 - 09:00"
+ */
+export function formatExamTimeRange(startTime?: string, durationMin?: number, endTime?: string): string {
+  const start = (startTime && startTime.trim()) ? startTime.trim() : '07:30';
+  const end = (endTime && endTime.trim()) ? endTime.trim() : calculateEndTime(start, durationMin);
+  return `${start} - ${end}`;
+}
+
+/**
  * Helper untuk mendeteksi status waktu pelaksanaan ujian CBT
- * Menggunakan tanggal lokal sistem (bukan UTC) untuk mencegah ujian terkunci di zona waktu WIB.
- * Jika status ujian = 'ACTIVE', tombol selalu aktif (dapat dibuka oleh proktor/guru).
+ * Menghitung rentang jam mulai s.d. jam selesai secara akurat,
+ * mencegah akses di luar jadwal ujian (sebelum jam mulai atau setelah jam selesai).
  */
 export function getExamTimingInfo(exam: {
   EXAM_DATE?: string;
@@ -2157,10 +2315,14 @@ export function getExamTimingInfo(exam: {
   STATUS?: string;
 }): {
   isStarted: boolean;
+  isExpired: boolean;
   timingStatus: 'STARTED' | 'UPCOMING' | 'EXPIRED';
   timingMessage: string;
   period: string;
   timeWithPeriod: string;
+  startTime: string;
+  endTime: string;
+  timeRange: string;
 } {
   const now = new Date();
   const currentYMD = getLocalDateYMD(now);
@@ -2169,29 +2331,42 @@ export function getExamTimingInfo(exam: {
   const currentTimeStr = `${currentHours}:${currentMinutes}`;
 
   const examDate = exam.EXAM_DATE || currentYMD;
-  const startTime = exam.START_TIME || '07:30';
+  const startTime = (exam.START_TIME && exam.START_TIME.trim()) ? exam.START_TIME.trim() : '07:30';
+  const durationMin = Number(exam.DURATION_MIN || 90);
+  const endTime = (exam.END_TIME && exam.END_TIME.trim()) ? exam.END_TIME.trim() : calculateEndTime(startTime, durationMin);
+  const timeRange = `${startTime} - ${endTime} WIB`;
   const period = getTimeOfDayPeriod(startTime);
   const timeWithPeriod = formatTimeWithPeriod(startTime);
 
-  // Jika status ujian secara manual diaktifkan oleh Proktor/Guru menjadi 'ACTIVE'
-  if (exam.STATUS === 'ACTIVE') {
+  // Jika ujian ditutup secara permanen
+  if (exam.STATUS === 'COMPLETED' || exam.STATUS === 'ARCHIVED') {
     return {
-      isStarted: true,
-      timingStatus: 'STARTED',
-      timingMessage: `Ujian Aktif • ${timeWithPeriod}`,
+      isStarted: false,
+      isExpired: true,
+      timingStatus: 'EXPIRED',
+      timingMessage: 'Pelaksanaan ujian telah ditutup',
       period,
-      timeWithPeriod
+      timeWithPeriod,
+      startTime,
+      endTime,
+      timeRange
     };
   }
 
-  // 1. Jika tanggal ujian adalah di masa lalu, maka waktu ujian sudah lampau/dimulai
+  // 1. Jika tanggal ujian di masa lalu (sudah lewat hari)
   if (examDate < currentYMD) {
+    const parts = examDate.split('-');
+    const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : examDate;
     return {
-      isStarted: true,
-      timingStatus: 'STARTED',
-      timingMessage: `Jadwal ujian aktif (${timeWithPeriod})`,
+      isStarted: false,
+      isExpired: true,
+      timingStatus: 'EXPIRED',
+      timingMessage: `Waktu ujian telah berakhir (Jadwal: ${formattedDate} • ${timeRange})`,
       period,
-      timeWithPeriod
+      timeWithPeriod,
+      startTime,
+      endTime,
+      timeRange
     };
   }
 
@@ -2201,31 +2376,59 @@ export function getExamTimingInfo(exam: {
     const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : examDate;
     return {
       isStarted: false,
+      isExpired: false,
       timingStatus: 'UPCOMING',
-      timingMessage: `Dimulai pada ${formattedDate} pukul ${timeWithPeriod}`,
+      timingMessage: `Dimulai pada ${formattedDate} pukul ${timeWithPeriod} (${timeRange})`,
       period,
-      timeWithPeriod
+      timeWithPeriod,
+      startTime,
+      endTime,
+      timeRange
     };
   }
 
-  // 3. Tanggal ujian adalah hari ini: cek jam mulai
+  // 3. Tanggal ujian adalah hari ini (examDate === currentYMD):
+  // 3a. Belum masuk jam mulai (sebelum startTime)
   if (currentTimeStr < startTime) {
     return {
       isStarted: false,
+      isExpired: false,
       timingStatus: 'UPCOMING',
-      timingMessage: `Dimulai hari ini pukul ${timeWithPeriod}`,
+      timingMessage: `Dimulai hari ini pukul ${startTime} WIB (${timeRange})`,
       period,
-      timeWithPeriod
+      timeWithPeriod,
+      startTime,
+      endTime,
+      timeRange
     };
   }
 
-  // Hari ini dan jam sekarang sudah >= startTime -> Waktu ujian dimulai
+  // 3b. Sudah melewati batas jam selesai hari ini (setelah endTime)
+  if (currentTimeStr > endTime) {
+    return {
+      isStarted: false,
+      isExpired: true,
+      timingStatus: 'EXPIRED',
+      timingMessage: `Waktu pelaksanaan ujian telah berakhir (Batas akhir pengerjaan s.d. ${endTime} WIB)`,
+      period,
+      timeWithPeriod,
+      startTime,
+      endTime,
+      timeRange
+    };
+  }
+
+  // 3c. Hari ini dan jam sekarang berada di antara startTime dan endTime -> SEDANG BERLANGSUNG
   return {
     isStarted: true,
+    isExpired: false,
     timingStatus: 'STARTED',
-    timingMessage: `Sedang Berlangsung (Dimulai ${timeWithPeriod})`,
+    timingMessage: `Sedang Berlangsung (${timeRange})`,
     period,
-    timeWithPeriod
+    timeWithPeriod,
+    startTime,
+    endTime,
+    timeRange
   };
 }
 
@@ -2555,11 +2758,14 @@ export function getAvailableExamsForUser(user: User): AvailableExamItem[] {
       const presenceBlocked = isStrictSchool && isToday && !isPresentAtSchool && !isAlreadyInProgress;
       const isMakeupExam = Boolean(attendance && attendance.status === 'ABSENT_SUSULAN');
 
-      // Siswa dapat memulai jika:
-      // 1. Belum submit
-      // 2. Waktu ujian sudah tiba (timing.isStarted) ATAU exam.STATUS === 'ACTIVE' ATAU sedang berlangsung
-      // 3. Tidak diblokir presensi
-      const canStart = !isSubmitted && (timing.isStarted || exam.STATUS === 'ACTIVE' || Boolean(isAlreadyInProgress)) && !presenceBlocked;
+      // Siswa dapat memulai / melanjutkan ujian jika:
+      // 1. Belum selesai (belum SUBMITTED atau REVIEW)
+      // 2. Jika sesi IN_PROGRESS sedang berjalan, siswa boleh melanjutkan
+      // 3. Jika sesi baru, HANYA boleh jika waktu ujian sedang berlangsung (STARTED) dan tidak kedaluwarsa (EXPIRED)
+      // 4. Tidak diblokir presensi
+      const canStart = !isSubmitted && !presenceBlocked && (
+        Boolean(isAlreadyInProgress) || (timing.timingStatus === 'STARTED' && !timing.isExpired)
+      );
       const questionCount = getQuestionsForExam(exam, allQuestions, user.ID).length;
 
       return {
@@ -2570,7 +2776,7 @@ export function getAvailableExamsForUser(user: User): AvailableExamItem[] {
         className: classes[exam.CLASS_ID] || '-',
         date: exam.EXAM_DATE,
         startTime: exam.START_TIME || '07:30',
-        endTime: exam.END_TIME || '',
+        endTime: exam.END_TIME || calculateEndTime(exam.START_TIME, exam.DURATION_MIN),
         room: exam.ROOM || '',
         session: exam.SESSION || '',
         duration: Number(exam.DURATION_MIN || 60),
@@ -2631,6 +2837,18 @@ export function startExam(token: string, examId: string, tokenInput?: string) {
     }
   }
 
+  // Validasi batas waktu pelaksanaan ujian:
+  // Siswa hanya dapat memulai saat jadwal waktu ujian dimulai s.d. jam selesai (tidak dapat diakses di luar jam)
+  const timing = getExamTimingInfo(exam);
+  if (!attempt || attempt.STATUS !== 'IN_PROGRESS') {
+    if (timing.timingStatus === 'EXPIRED') {
+      throw new Error(`Akses Ujian Ditolak: ${timing.timingMessage}. Batas waktu pengerjaan telah berakhir sehingga ujian tidak dapat diakses lagi.`);
+    }
+    if (timing.timingStatus === 'UPCOMING' || !timing.isStarted) {
+      throw new Error(`Ujian belum dapat dimulai. ${timing.timingMessage}`);
+    }
+  }
+
   // Validasi token ujian jika ujian memerlukan token dan siswa belum memiliki sesi yang sedang berjalan
   if (exam.USE_TOKEN && (!attempt || attempt.STATUS !== 'IN_PROGRESS')) {
     const requiredToken = String(exam.TOKEN || '').trim().toUpperCase();
@@ -2638,12 +2856,6 @@ export function startExam(token: string, examId: string, tokenInput?: string) {
     if (!requiredToken || providedToken !== requiredToken) {
       throw new Error('Token ujian tidak valid. Pastikan token yang Anda masukkan sesuai arahan pengawas.');
     }
-  }
-
-  // Validasi waktu ujian: siswa hanya dapat memulai saat jadwal waktu ujian dimulai
-  const timing = getExamTimingInfo(exam);
-  if (!timing.isStarted && (!attempt || attempt.STATUS !== 'IN_PROGRESS')) {
-    throw new Error(`Ujian belum dapat dimulai. ${timing.timingMessage}`);
   }
 
   const allStoredQuestions = getStorage<Question[]>(STORAGE_KEYS.QUESTIONS, []);
@@ -3289,7 +3501,10 @@ export function getPrintData(
   }
 ): PrintData {
   authorize(token, ['ADMIN', 'TEACHER']);
-  const settings = options?.overrideSettings || getStorage<SchoolSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
+  const baseSettings = getSchoolSettings();
+  const settings = options?.overrideSettings
+    ? { ...baseSettings, ...options.overrideSettings }
+    : baseSettings;
   const exams = options?.overrideExams && options.overrideExams.length > 0 ? options.overrideExams : getStorage<Exam[]>(STORAGE_KEYS.EXAMS, []);
   const exam = exams.find(e => e.ID === examId) || exams[0];
   if (!exam && documentType !== 'cards') throw new Error('Pilih ujian terlebih dahulu.');
@@ -3405,7 +3620,10 @@ export function getStudentCardsPrintData(
   } = {}
 ): PrintData {
   authorize(token, ['ADMIN', 'TEACHER']);
-  const settings = options?.overrideSettings || getStorage<SchoolSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
+  const baseSettings = getSchoolSettings();
+  const settings = options?.overrideSettings
+    ? { ...baseSettings, ...options.overrideSettings }
+    : baseSettings;
   const exams = options?.overrideExams && options.overrideExams.length > 0 ? options.overrideExams : getStorage<Exam[]>(STORAGE_KEYS.EXAMS, []);
   const users = options?.overrideUsers && options.overrideUsers.length > 0 ? options.overrideUsers : getStorage<User[]>(STORAGE_KEYS.USERS, []);
   const classes = options?.overrideClasses && options.overrideClasses.length > 0 ? options.overrideClasses : getStorage<ClassItem[]>(STORAGE_KEYS.CLASSES, []);
@@ -3495,13 +3713,29 @@ export function getStudentCardsPrintData(
 }
 
 export function getSchoolSettings(): SchoolSettings {
-  return getStorage<SchoolSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
+  const settings = getStorage<SchoolSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
+  const dedicatedLogo = safeStorageGet('LMS_OFFICIAL_LOGO_DATA') || '';
+  const finalLogo = settings.LOGO_URL || dedicatedLogo || DEFAULT_SETTINGS.LOGO_URL || '/logo-ma-cikaramas.svg';
+  return {
+    ...DEFAULT_SETTINGS,
+    ...settings,
+    SCHOOL_YEAR: settings.SCHOOL_YEAR || DEFAULT_SETTINGS.SCHOOL_YEAR || '2026/2027',
+    SEMESTER: settings.SEMESTER || DEFAULT_SETTINGS.SEMESTER || '1 (Ganjil)',
+    DEFAULT_ASSESSMENT_NAME: settings.DEFAULT_ASSESSMENT_NAME || DEFAULT_SETTINGS.DEFAULT_ASSESSMENT_NAME || 'Sumatif Akhir Semester (SAS)',
+    ASSESSMENT_TITLE: settings.ASSESSMENT_TITLE || settings.DEFAULT_ASSESSMENT_NAME || DEFAULT_SETTINGS.ASSESSMENT_TITLE || 'Sumatif Akhir Semester (SAS)',
+    LOGO_URL: finalLogo
+  };
 }
 
 export function saveSettings(token: string, settingsPayload: Partial<SchoolSettings>) {
   const auth = authorize(token, ['ADMIN']);
   const current = getStorage<SchoolSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
   const updated = { ...current, ...settingsPayload };
+  
+  if (settingsPayload.LOGO_URL !== undefined) {
+    safeStorageSet('LMS_OFFICIAL_LOGO_DATA', settingsPayload.LOGO_URL || '');
+  }
+
   setStorage(STORAGE_KEYS.SETTINGS, updated);
 
   // Synchronize principal name, title, and NIP across admin account and teacher A roster
@@ -3540,6 +3774,11 @@ export function saveSettings(token: string, settingsPayload: Partial<SchoolSetti
   }
 
   logActivity(auth.user.ID, 'SAVE_SETTINGS', 'Pengaturan sekolah diperbarui');
+  if (typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(new CustomEvent('LMS_SETTINGS_CHANGED', { detail: updated }));
+    } catch {}
+  }
   return { success: true, settings: updated };
 }
 

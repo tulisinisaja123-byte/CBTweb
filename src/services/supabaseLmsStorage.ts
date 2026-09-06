@@ -554,7 +554,16 @@ export async function getSchoolSettings(): Promise<SchoolSettings> {
 
       if (data) {
         const { id, ...settings } = data;
-        return { ...DEFAULT_SETTINGS, ...settings };
+        const localLogo = localStore.safeStorageGet('LMS_OFFICIAL_LOGO_DATA') || '';
+        return {
+          ...DEFAULT_SETTINGS,
+          ...settings,
+          SCHOOL_YEAR: settings.SCHOOL_YEAR || DEFAULT_SETTINGS.SCHOOL_YEAR || '2026/2027',
+          SEMESTER: settings.SEMESTER || DEFAULT_SETTINGS.SEMESTER || '1 (Ganjil)',
+          DEFAULT_ASSESSMENT_NAME: settings.DEFAULT_ASSESSMENT_NAME || DEFAULT_SETTINGS.DEFAULT_ASSESSMENT_NAME || 'Sumatif Akhir Semester (SAS)',
+          ASSESSMENT_TITLE: settings.ASSESSMENT_TITLE || settings.DEFAULT_ASSESSMENT_NAME || DEFAULT_SETTINGS.ASSESSMENT_TITLE || 'Sumatif Akhir Semester (SAS)',
+          LOGO_URL: settings.LOGO_URL || localLogo || DEFAULT_SETTINGS.LOGO_URL || '/logo-ma-cikaramas.svg'
+        };
       }
     } catch {}
   }
@@ -569,6 +578,9 @@ export async function saveSettings(token: string, payload: Partial<SchoolSetting
   settings: SchoolSettings;
 }> {
   const auth = await authorize(token, ['ADMIN']);
+  if (payload.LOGO_URL !== undefined) {
+    localStore.safeStorageSet('LMS_OFFICIAL_LOGO_DATA', payload.LOGO_URL || '');
+  }
   if (isSupabaseConfigured) {
     try {
       const current = await getSchoolSettings();
@@ -706,7 +718,7 @@ export async function getDashboardDataForUser(user: User): Promise<DashboardData
                 const timing = localStore.getExamTimingInfo(exam);
                 const isAlreadyInProgress = attempt && attempt.STATUS === 'IN_PROGRESS';
                 const isSubmitted = attempt && (attempt.STATUS === 'SUBMITTED' || attempt.STATUS === 'REVIEW');
-                const canStart = !isSubmitted && (timing.isStarted || Boolean(isAlreadyInProgress));
+                const canStart = !isSubmitted && (Boolean(isAlreadyInProgress) || (timing.timingStatus === 'STARTED' && !timing.isExpired));
                 const questionCount = allQuestions.filter(q => q.EXAM_ID === exam.ID).length;
 
                 return {
@@ -717,7 +729,7 @@ export async function getDashboardDataForUser(user: User): Promise<DashboardData
                   className: classMap[exam.CLASS_ID] || '-',
                   date: exam.EXAM_DATE,
                   startTime: exam.START_TIME || '07:30',
-                  endTime: exam.END_TIME || '',
+                  endTime: exam.END_TIME || localStore.calculateEndTime(exam.START_TIME, exam.DURATION_MIN),
                   room: exam.ROOM || '',
                   session: exam.SESSION || '',
                   duration: Number(exam.DURATION_MIN || 60),
@@ -1146,6 +1158,17 @@ export async function startExam(token: string, examId: string, tokenInput?: stri
           throw new Error('Anda sudah menyelesaikan ujian ini.');
         }
 
+        // Validasi waktu ujian: siswa hanya dapat memulai saat rentang waktu aktif (belum kedaluwarsa)
+        const timing = localStore.getExamTimingInfo(exam);
+        if (!existingAttempt || existingAttempt.STATUS !== 'IN_PROGRESS') {
+          if (timing.timingStatus === 'EXPIRED') {
+            throw new Error(`Akses Ujian Ditolak: ${timing.timingMessage}. Batas waktu pengerjaan telah berakhir sehingga ujian tidak dapat diakses lagi.`);
+          }
+          if (timing.timingStatus === 'UPCOMING' || !timing.isStarted) {
+            throw new Error(`Ujian belum dapat dimulai. ${timing.timingMessage}`);
+          }
+        }
+
         // Validasi token ujian jika ujian memerlukan token dan siswa belum memiliki sesi yang sedang berjalan
         if (exam.USE_TOKEN && (!existingAttempt || existingAttempt.STATUS !== 'IN_PROGRESS')) {
           const requiredToken = String(exam.TOKEN || '').trim().toUpperCase();
@@ -1443,7 +1466,7 @@ export async function getAvailableExams(token: string): Promise<AvailableExamIte
             const timing = localStore.getExamTimingInfo(exam);
             const isAlreadyInProgress = attempt && attempt.STATUS === 'IN_PROGRESS';
             const isSubmitted = attempt && (attempt.STATUS === 'SUBMITTED' || attempt.STATUS === 'REVIEW');
-            const canStart = !isSubmitted && (timing.isStarted || Boolean(isAlreadyInProgress));
+            const canStart = !isSubmitted && (Boolean(isAlreadyInProgress) || (timing.timingStatus === 'STARTED' && !timing.isExpired));
             const questionCount = questions.filter((q: any) => q.EXAM_ID === exam.ID).length;
 
             return {
@@ -1454,7 +1477,7 @@ export async function getAvailableExams(token: string): Promise<AvailableExamIte
               className: classes[exam.CLASS_ID] || '-',
               date: exam.EXAM_DATE,
               startTime: exam.START_TIME || '07:30',
-              endTime: exam.END_TIME || '',
+              endTime: exam.END_TIME || localStore.calculateEndTime(exam.START_TIME, exam.DURATION_MIN),
               room: exam.ROOM || '',
               session: exam.SESSION || '',
               duration: Number(exam.DURATION_MIN || 60),

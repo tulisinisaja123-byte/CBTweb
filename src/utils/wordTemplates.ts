@@ -14,6 +14,7 @@ import {
 } from 'docx';
 import { SchoolSettings } from '../types';
 import { parseMatchingDetails } from './matchingHelper';
+import { formatDocumentSemester } from './printHelper';
 
 export const QUESTION_TYPES_INFO = [
   {
@@ -709,7 +710,7 @@ export async function downloadExamPaperDocx(opts: ExamDocxExportOptions) {
       spacing: { after: 140 },
       children: [
         new TextRun({
-          text: `TAHUN PELAJARAN ${opts.academicYear || '2026/2027'} — SEMESTER ${(opts.academicSemester || 'Ganjil').toUpperCase()}`,
+          text: `TAHUN PELAJARAN ${opts.academicYear || '2026/2027'} — SEMESTER ${formatDocumentSemester(opts.academicSemester)}`,
           bold: true,
           size: 20,
           font: fontName
@@ -1373,7 +1374,7 @@ export function downloadExamPaperDoc(opts: ExamDocxExportOptions) {
           NASKAH SOAL ${opts.assessmentTypeName ? opts.assessmentTypeName.toUpperCase() : 'PENILAIAN AKHIR SEMESTER'}
         </div>
         <div style="font-size: 10.5pt; font-weight: bold; margin-top: 2px;">
-          TAHUN PELAJARAN ${opts.academicYear || '2026/2027'} — SEMESTER ${(opts.academicSemester || 'Ganjil').toUpperCase()}
+          TAHUN PELAJARAN ${opts.academicYear || '2026/2027'} — SEMESTER ${formatDocumentSemester(opts.academicSemester)}
         </div>
       </div>
 

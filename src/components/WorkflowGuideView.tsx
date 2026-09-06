@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Compass,
   CheckCircle2,
@@ -28,6 +28,7 @@ import {
   Check
 } from 'lucide-react';
 import { User } from '../types';
+import { printElementReliable } from '../utils/printHelper';
 
 interface WorkflowGuideViewProps {
   user: User;
@@ -453,6 +454,7 @@ export const WorkflowGuideView: React.FC<WorkflowGuideViewProps> = ({ user, onNa
   });
   const [expandedStepId, setExpandedStepId] = useState<string | null>(baseSteps[0]?.id || null);
   const [isPrintSummaryModalOpen, setIsPrintSummaryModalOpen] = useState(false);
+  const guideContentRef = useRef<HTMLDivElement>(null);
 
   // Synchronize completed checklist to local storage
   const toggleStepCompletion = (stepId: string) => {
@@ -528,7 +530,7 @@ export const WorkflowGuideView: React.FC<WorkflowGuideViewProps> = ({ user, onNa
       <div className="bg-gradient-to-br from-white to-[#F8F9FA] border border-[#DEE2E6] rounded-2xl p-5 sm:p-7 shadow-xs relative overflow-hidden">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
           <div className="space-y-2 max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#E7F0FF] text-[#0052CC] border border-[#B3D1FF] text-xs font-semibold">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
               <Compass className="w-3.5 h-3.5" />
               <span>{viewHeader.badge}</span>
             </div>
@@ -546,12 +548,12 @@ export const WorkflowGuideView: React.FC<WorkflowGuideViewProps> = ({ user, onNa
               <span className="text-xs font-bold text-[#1A1C1E]">
                 {isStudent ? 'Kemajuan Ujian Anda' : 'Progress Alur Kerja'}
               </span>
-              <span className="text-sm font-bold font-mono text-[#0052CC]">{completionPercent}%</span>
+              <span className="text-sm font-bold font-mono text-emerald-800">{completionPercent}%</span>
             </div>
             {/* Progress Bar */}
             <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
               <div
-                className="h-full bg-[#0052CC] rounded-full transition-all duration-300"
+                className="h-full bg-emerald-600 rounded-full transition-all duration-300"
                 style={{ width: `${completionPercent}%` }}
               />
             </div>
@@ -646,7 +648,17 @@ export const WorkflowGuideView: React.FC<WorkflowGuideViewProps> = ({ user, onNa
             </div>
             <button
               type="button"
-              onClick={() => window.print()}
+              onClick={() => {
+                if (guideContentRef.current) {
+                  printElementReliable(guideContentRef.current, {
+                    title: 'SOP_Panduan_Pelaksanaan_CBT',
+                    paperSize: 'A4',
+                    orientation: 'portrait'
+                  });
+                } else {
+                  window.print();
+                }
+              }}
               className="px-3 py-1.5 rounded-lg bg-white border border-[#CED4DA] hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors shrink-0 cursor-pointer"
               title="Cetak format lembar SOP panduan"
             >
@@ -697,7 +709,7 @@ export const WorkflowGuideView: React.FC<WorkflowGuideViewProps> = ({ user, onNa
       </div>
 
       {/* MASTER TIMELINE STEPS */}
-      <div className="space-y-4">
+      <div ref={guideContentRef} className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm sm:text-base font-bold text-[#1A1C1E] flex items-center gap-2">
             <span>Daftar Urutan Langkah Pengerjaan</span>

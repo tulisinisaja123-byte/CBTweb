@@ -189,7 +189,7 @@ export const TimetableView: React.FC<TimetableViewProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 rounded bg-[#E7F0FF] text-[#0052CC] font-bold text-xs">
-              JADWAL TATAP MUKA TP 2026/2027
+              JADWAL TATAP MUKA TP {schoolSettings.SCHOOL_YEAR || '2026/2027'}
             </span>
             <span className="px-2 py-0.5 rounded bg-[#E6F4EA] text-[#137333] font-semibold text-xs flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5" />

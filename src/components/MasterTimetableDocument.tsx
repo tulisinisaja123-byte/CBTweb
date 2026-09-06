@@ -33,6 +33,7 @@ import {
   getSchoolSettings,
   saveSettings
 } from '../services/lmsStorage';
+import { formatDocumentSemester } from '../utils/printHelper';
 import {
   Check,
   CheckCircle2,
@@ -284,6 +285,7 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
   const [principalNameInput, setPrincipalNameInput] = useState(settings?.PRINCIPAL_NAME || 'AI SUKAESIH, S.Pd');
   const [principalNbmInput, setPrincipalNbmInput] = useState(settings?.PRINCIPAL_NIP || '1281201');
   const [schoolYearInput, setSchoolYearInput] = useState(settings?.SCHOOL_YEAR || '2026/2027');
+  const [semesterInput, setSemesterInput] = useState(settings?.SEMESTER || '1 (Ganjil)');
   const [establishedDateInput, setEstablishedDateInput] = useState('14 Juli 2026');
 
   // Sync with settings prop changes
@@ -293,6 +295,7 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
       if (settings.PRINCIPAL_NAME) setPrincipalNameInput(settings.PRINCIPAL_NAME);
       if (settings.PRINCIPAL_NIP) setPrincipalNbmInput(settings.PRINCIPAL_NIP);
       if (settings.SCHOOL_YEAR) setSchoolYearInput(settings.SCHOOL_YEAR);
+      if (settings.SEMESTER) setSemesterInput(settings.SEMESTER);
     }
   }, [settings]);
 
@@ -300,11 +303,15 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
   const classList = useMemo(() => MA_CIKARAMAS_CLASSES.map(c => c.name), []);
   const schoolName = settings?.SCHOOL_NAME || 'MA MUHAMMADIYAH CIKARAMAS';
   const academicYear = schoolYearInput;
+  const activeSemester = settings?.SEMESTER || semesterInput || getSchoolSettings()?.SEMESTER || 'Ganjil';
+  const displaySemester = useMemo(() => formatDocumentSemester(activeSemester), [activeSemester]);
+  const isGenap = activeSemester.toLowerCase().includes('genap') || activeSemester === '2';
+  const kokulikulerSemesterNumber = isGenap ? '2' : '1';
   const principalTitle = principalTitleInput;
   const principalName = principalNameInput;
   const principalNbm = principalNbmInput;
 
-  // Listen for storage changes
+  // Listen for storage and settings changes
   useEffect(() => {
     const handleSync = () => {
       setTeachers(getTeacherRoster(activeToken));
@@ -312,12 +319,26 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
       const storedRows = getTimetableRows();
       if (storedRows && storedRows.length > 0) setRows(storedRows);
     };
+
+    const handleSettingsSync = () => {
+      const fresh = getSchoolSettings();
+      if (fresh) {
+        if (fresh.SCHOOL_YEAR) setSchoolYearInput(fresh.SCHOOL_YEAR);
+        if (fresh.SEMESTER) setSemesterInput(fresh.SEMESTER);
+        if (fresh.PRINCIPAL_TITLE) setPrincipalTitleInput(fresh.PRINCIPAL_TITLE);
+        if (fresh.PRINCIPAL_NAME) setPrincipalNameInput(fresh.PRINCIPAL_NAME);
+        if (fresh.PRINCIPAL_NIP) setPrincipalNbmInput(fresh.PRINCIPAL_NIP);
+      }
+    };
+
     if (typeof window !== 'undefined') {
       window.addEventListener('LMS_TIMETABLE_CHANGED', handleSync);
       window.addEventListener('LMS_TEACHER_DATA_CHANGED', handleSync);
+      window.addEventListener('LMS_SETTINGS_CHANGED', handleSettingsSync);
       return () => {
         window.removeEventListener('LMS_TIMETABLE_CHANGED', handleSync);
         window.removeEventListener('LMS_TEACHER_DATA_CHANGED', handleSync);
+        window.removeEventListener('LMS_SETTINGS_CHANGED', handleSettingsSync);
       };
     }
   }, [activeToken]);
@@ -721,7 +742,7 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
           {schoolName}
         </h2>
         <h3 className="font-bold uppercase text-[8.5pt] sm:text-[9.5pt] leading-tight m-0 mt-0.5">
-          SEMESTER 1 &amp; 2 TAHUN PELAJARAN {academicYear}
+          SEMESTER {displaySemester} TAHUN PELAJARAN {academicYear}
           <span className="ml-2 font-normal lowercase text-[7pt] text-gray-700">
             ({workDays} Hari Kerja)
           </span>
@@ -729,12 +750,36 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
       </div>
 
       {/* 2. TIER ATAS (SENIN, SELASA, RABU) + DAFTAR GURU A-T (1-20) */}
-      <div className="flex flex-row items-start gap-1.5 w-full mb-2">
+      <div
+        className="flex flex-row items-start gap-1.5 w-full mb-2"
+        style={{
+          display: 'flex',
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          gap: '6px',
+          width: '100%',
+          marginBottom: '6px',
+          pageBreakInside: 'avoid',
+          breakInside: 'avoid'
+        }}
+      >
         {/* TABEL JADWAL TIER ATAS (SENIN, SELASA, RABU) */}
-        <div className="flex-1 overflow-x-auto">
+        <div
+          className="flex-1 overflow-x-auto"
+          style={{
+            flex: '1 1 0%',
+            minWidth: 0,
+            overflowX: isPrintMode ? 'visible' : 'auto'
+          }}
+        >
           <table
             className="w-full border-collapse border border-black text-center"
-            style={{ fontSize }}
+            style={{
+              fontSize,
+              width: '100%',
+              borderCollapse: 'collapse',
+              tableLayout: 'auto'
+            }}
           >
             <thead>
               {/* Header Baris 1: Hari */}
@@ -1076,18 +1121,39 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
         </div>
 
         {/* TABEL GURU A - T (1 - 20) DI SEBELAH KANAN TIER ATAS (SESUAI GAMBAR ASLI) */}
-        <div className="w-[285px] shrink-0">
+        <div
+          className="w-[285px] shrink-0"
+          style={{
+            width: '280px',
+            minWidth: '280px',
+            maxWidth: '280px',
+            flexShrink: 0
+          }}
+        >
           <table
             className="w-full border-collapse border border-black text-left"
-            style={{ fontSize: '5.5pt', lineHeight: 1.15 }}
+            style={{
+              fontSize: '5.5pt',
+              lineHeight: 1.15,
+              width: '100%',
+              borderCollapse: 'collapse',
+              tableLayout: 'fixed'
+            }}
           >
+            <colgroup>
+              <col style={{ width: '18px' }} />
+              <col style={{ width: '96px' }} />
+              <col style={{ width: '20px' }} />
+              <col style={{ width: '120px' }} />
+              <col style={{ width: '26px' }} />
+            </colgroup>
             <thead>
               <tr className="bg-gray-100 font-extrabold uppercase border-b border-black text-center">
-                <th className="border border-black p-0.5 w-4 text-center font-bold">No</th>
-                <th className="border border-black p-0.5 text-left font-bold">Nama Guru</th>
-                <th className="border border-black p-0.5 w-5 text-center font-bold">Kd</th>
-                <th className="border border-black p-0.5 text-left font-bold">Mata Pelajaran</th>
-                <th className="border border-black p-0.5 w-6 text-center font-bold" title="Jumlah jam mengajar otomatis dari jadwal">Jam</th>
+                <th className="border border-black p-0.5 text-center font-bold" style={{ width: '18px' }}>No</th>
+                <th className="border border-black p-0.5 text-left font-bold" style={{ width: '96px' }}>Nama Guru</th>
+                <th className="border border-black p-0.5 text-center font-bold" style={{ width: '20px' }}>Kd</th>
+                <th className="border border-black p-0.5 text-left font-bold" style={{ width: '120px' }}>Mata Pelajaran</th>
+                <th className="border border-black p-0.5 text-center font-bold" style={{ width: '26px' }} title="Jumlah jam mengajar otomatis dari jadwal">Jam</th>
               </tr>
             </thead>
             <tbody>
@@ -1104,17 +1170,17 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
                     }}
                     title={`Klik untuk info guru ${t.name}`}
                   >
-                    <td className="border border-black p-0.5 text-center">{t.no}</td>
-                    <td className="border border-black p-0.5 font-medium truncate max-w-[100px]">
+                    <td className="border border-black p-0.5 text-center" style={{ width: '18px' }}>{t.no}</td>
+                    <td className="border border-black p-0.5 font-medium truncate" style={{ width: '96px', maxWidth: '96px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {t.name}
                     </td>
-                    <td className="border border-black p-0.5 text-center font-mono font-black bg-gray-50">
+                    <td className="border border-black p-0.5 text-center font-mono font-black bg-gray-50" style={{ width: '20px' }}>
                       {t.code}
                     </td>
-                    <td className="border border-black p-0.5 truncate max-w-[95px]">
+                    <td className="border border-black p-0.5 truncate" style={{ width: '120px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {(t.subjectsSummary || []).join(', ')}
                     </td>
-                    <td className={`border border-black p-0.5 text-center font-mono font-extrabold ${totalHours >= 24 ? 'text-emerald-800 bg-emerald-50/70' : 'text-slate-800'}`}>
+                    <td className={`border border-black p-0.5 text-center font-mono font-extrabold ${totalHours >= 24 ? 'text-emerald-800 bg-emerald-50/70' : 'text-slate-800'}`} style={{ width: '26px' }}>
                       {totalHours}
                     </td>
                   </tr>
@@ -1126,12 +1192,36 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
       </div>
 
       {/* 3. TIER BAWAH (KAMIS, JUM'AT, & OPTIONAL SABTU) + KOKULIKULER + PENGESAHAN */}
-      <div className="flex flex-row items-start gap-1.5 w-full">
+      <div
+        className="flex flex-row items-start gap-1.5 w-full"
+        style={{
+          display: 'flex',
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          gap: '6px',
+          width: '100%',
+          pageBreakInside: 'avoid',
+          breakInside: 'avoid'
+        }}
+      >
         {/* TABEL JADWAL TIER BAWAH (KAMIS, JUM'AT, [+ SABTU]) */}
-        <div className={workDays === 6 ? 'flex-1 overflow-x-auto' : 'w-[68%] overflow-x-auto'}>
+        <div
+          className={workDays === 6 ? 'flex-1 overflow-x-auto' : 'w-[68%] overflow-x-auto'}
+          style={{
+            width: workDays === 6 ? 'auto' : '68%',
+            flex: workDays === 6 ? '1 1 0%' : '0 0 68%',
+            minWidth: 0,
+            overflowX: isPrintMode ? 'visible' : 'auto'
+          }}
+        >
           <table
             className="w-full border-collapse border border-black text-center"
-            style={{ fontSize }}
+            style={{
+              fontSize,
+              width: '100%',
+              borderCollapse: 'collapse',
+              tableLayout: 'auto'
+            }}
           >
             <thead>
               {/* Header Baris 1: Hari */}
@@ -1517,11 +1607,31 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
         </div>
 
         {/* KOKULIKULER + TANDA TANGAN KEPALA MADRASAH DI SEBELAH KANAN TIER BAWAH (SESUAI GAMBAR) */}
-        <div className={workDays === 6 ? 'w-[285px] shrink-0 flex flex-col gap-1.5' : 'flex-1 flex flex-row gap-2'}>
+        <div
+          className={workDays === 6 ? 'w-[285px] shrink-0 flex flex-col gap-1.5' : 'flex-1 flex flex-row gap-2'}
+          style={{
+            width: workDays === 6 ? '280px' : 'calc(32% - 6px)',
+            flex: workDays === 6 ? '0 0 280px' : '1 1 0%',
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: workDays === 6 ? 'column' : 'row',
+            gap: '6px',
+            alignItems: 'stretch'
+          }}
+        >
           {/* KOKULIKULER SEMESTER 1 BOX - Clickable to Edit */}
           <div
             className={`border border-black p-1.5 bg-white cursor-pointer hover:bg-slate-50 transition-colors ${workDays === 6 ? 'w-full' : 'flex-1'}`}
-            style={{ fontSize: '5.5pt', lineHeight: 1.25 }}
+            style={{
+              flex: '1 1 0%',
+              minWidth: 0,
+              fontSize: '5.5pt',
+              lineHeight: 1.25,
+              border: '1px solid #000000',
+              padding: '5px',
+              backgroundColor: '#ffffff',
+              boxSizing: 'border-box'
+            }}
             onClick={() => {
               if (!isPrintMode) {
                 setKokulikulerEditing(JSON.parse(JSON.stringify(kokulikulerData)));
@@ -1530,9 +1640,19 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
             }}
             title={!isPrintMode ? "Klik untuk mengedit data kegiatan kokulikuler" : undefined}
           >
-            <div className="flex items-center justify-between border-b border-black pb-0.5 mb-1">
+            <div
+              className="flex items-center justify-between border-b border-black pb-0.5 mb-1"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderBottom: '1px solid #000000',
+                paddingBottom: '2px',
+                marginBottom: '4px'
+              }}
+            >
               <span className="font-extrabold uppercase text-[6.5pt]">
-                Kokulikuler Semester 1:
+                Kokulikuler Semester {kokulikulerSemesterNumber}:
               </span>
               {!isPrintMode && <Edit2 className="w-2.5 h-2.5 text-blue-600" />}
             </div>
@@ -1568,7 +1688,22 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
           {/* TANDA TANGAN & PENGESAHAN KEPALA MADRASAH - Clickable to Edit */}
           <div
             className={`border border-black p-1.5 bg-white text-center flex flex-col justify-between cursor-pointer hover:bg-slate-50 transition-colors ${workDays === 6 ? 'w-full' : 'w-[145px] shrink-0'}`}
-            style={{ fontSize: '6pt', minHeight: '140px' }}
+            style={{
+              width: workDays === 6 ? '100%' : '145px',
+              minWidth: workDays === 6 ? '100%' : '145px',
+              maxWidth: workDays === 6 ? '100%' : '145px',
+              flexShrink: 0,
+              fontSize: '6pt',
+              border: '1px solid #000000',
+              padding: '5px',
+              backgroundColor: '#ffffff',
+              textAlign: 'center',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+              minHeight: '135px',
+              boxSizing: 'border-box'
+            }}
             onClick={() => !isPrintMode && setIsHeaderModalOpen(true)}
             title={!isPrintMode ? "Klik untuk mengedit Kepala Madrasah dan Tanggal Pengesahan" : undefined}
           >
@@ -1584,9 +1719,37 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
             </div>
 
             {/* Area Stempel dan Tanda Tangan */}
-            <div className="relative my-2 h-10 flex items-center justify-center">
+            <div
+              className="relative my-2 h-10 flex items-center justify-center"
+              style={{
+                position: 'relative',
+                marginTop: '6px',
+                marginBottom: '6px',
+                height: '36px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
               {/* Lingkaran Simbol Stempel Resmi Muhammadiyah */}
-              <div className="w-11 h-11 rounded-full border border-blue-600/50 flex items-center justify-center text-[4.5pt] text-blue-700/60 rotate-[-12deg] uppercase font-bold tracking-tighter select-none pointer-events-none">
+              <div
+                className="w-11 h-11 rounded-full border border-blue-600/50 flex items-center justify-center text-[4.5pt] text-blue-700/60 rotate-[-12deg] uppercase font-bold tracking-tighter select-none pointer-events-none"
+                style={{
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '50%',
+                  border: '1px solid rgba(37, 99, 235, 0.5)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '4.5pt',
+                  color: 'rgba(29, 78, 216, 0.6)',
+                  transform: 'rotate(-12deg)',
+                  textTransform: 'uppercase',
+                  fontWeight: 'bold',
+                  letterSpacing: '-0.05em'
+                }}
+              >
                 MA MUH CIKARAMAS
               </div>
             </div>
@@ -1696,7 +1859,7 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
                   </div>
                 ) : slotCodeInput === 'KO' ? (
                   <div className="text-amber-800 font-bold">
-                    🌟 Jam Terpadu Kokulikuler Semester 1 (P5 / Rahmatan Lil Alamin)
+                    🌟 Jam Terpadu Kokulikuler Semester {kokulikulerSemesterNumber} (P5 / Rahmatan Lil Alamin)
                   </div>
                 ) : (
                   <div className="text-gray-500 italic">
@@ -1907,7 +2070,7 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="bg-white rounded-lg shadow-2xl border border-gray-300 w-full max-w-xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="px-5 py-3.5 bg-blue-700 text-white flex items-center justify-between">
-              <h3 className="font-bold text-sm">Edit Data Kegiatan Kokulikuler Semester 1</h3>
+              <h3 className="font-bold text-sm">Edit Data Kegiatan Kokulikuler Semester {kokulikulerSemesterNumber}</h3>
               <button type="button" onClick={() => setIsKokulikulerModalOpen(false)} className="text-white hover:opacity-80">
                 <X className="w-5 h-5" />
               </button>
@@ -2036,6 +2199,20 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
               </div>
 
               <div>
+                <label className="block font-bold text-gray-700 mb-1">Semester Aktif:</label>
+                <select
+                  value={semesterInput}
+                  onChange={(e) => setSemesterInput(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded font-semibold bg-white focus:outline-hidden"
+                >
+                  <option value="1 (Ganjil)">1 (Ganjil)</option>
+                  <option value="2 (Genap)">2 (Genap)</option>
+                  <option value="Ganjil">Ganjil</option>
+                  <option value="Genap">Genap</option>
+                </select>
+              </div>
+
+              <div>
                 <label className="block font-bold text-gray-700 mb-1">Tanggal Pengesahan Dokumen:</label>
                 <input
                   type="text"
@@ -2062,7 +2239,8 @@ export const MasterTimetableDocument: React.FC<MasterTimetableDocumentProps> = (
                       PRINCIPAL_TITLE: principalTitleInput,
                       PRINCIPAL_NAME: principalNameInput,
                       PRINCIPAL_NIP: principalNbmInput,
-                      SCHOOL_YEAR: schoolYearInput
+                      SCHOOL_YEAR: schoolYearInput,
+                      SEMESTER: semesterInput
                     });
                   } catch {}
                   triggerSaveNotification('Pengesahan dokumen berhasil diperbarui!');

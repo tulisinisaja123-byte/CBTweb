@@ -26,6 +26,8 @@ import {
   recordStudentAttendance,
   bulkRecordAttendance
 } from '../services/supabaseLmsStorage';
+import { printElementReliable } from '../utils/printHelper';
+import { getSchoolSettings } from '../services/lmsStorage';
 
 interface DailySchoolPresenceModalProps {
   isOpen: boolean;
@@ -229,71 +231,62 @@ export const DailySchoolPresenceModal: React.FC<DailySchoolPresenceModalProps> =
 
   // Print Barcode Sheet Handler
   const handlePrintSheet = () => {
-    const printWindow = window.open('', '_blank', 'width=800,height=900');
-    if (!printWindow) return;
-
     const qrPayload = `CBT-ATTENDANCE:MAS_CIKARAMAS:${todayStr}:${dailyCode}`;
 
     QRCode.toDataURL(qrPayload, { width: 350, margin: 2 }, (err, url) => {
-      if (err) return;
-      printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <title>Lembar Barcode Presensi CBT - ${todayStr}</title>
-            <style>
-              body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; padding: 40px; color: #1A1C1E; }
-              .header { border-bottom: 3px double #003366; padding-bottom: 16px; margin-bottom: 24px; }
-              .school-name { font-size: 20pt; font-weight: bold; color: #003366; margin: 0; }
-              .sub-title { font-size: 13pt; color: #495057; margin-top: 4px; }
-              .card { border: 2px dashed #0052CC; border-radius: 16px; padding: 30px; display: inline-block; background: #FAFCFF; max-width: 500px; margin-top: 10px; }
-              .qr-img { width: 280px; height: 280px; margin: 15px auto; }
-              .code-box { font-size: 32pt; font-weight: 800; letter-spacing: 4px; color: #003366; background: #E7F0FF; padding: 12px 24px; border-radius: 12px; margin: 16px 0; border: 1px solid #B3D1FF; }
-              .instructions { font-size: 11pt; color: #333; line-height: 1.6; text-align: left; background: #FFF; padding: 16px; border-radius: 10px; border: 1px solid #DEE2E6; }
-              .footer { margin-top: 30px; font-size: 9pt; color: #6C757D; }
-              @media print {
-                button { display: none; }
-                body { padding: 0; }
-              }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <div class="school-name">MAS MUHAMMADIYAH CIKARAMAS</div>
-              <div class="sub-title">VERIFIKASI KEHADIRAN FISIK CBT & ASESMEN MADRASAH</div>
-              <div style="font-size: 10pt; color: #6C757D; margin-top: 4px;">Tanggal Berlaku: <b>${todayStr}</b></div>
+      if (err) {
+        showToast('Gagal menghasilkan QR Code untuk dicetak.');
+        return;
+      }
+
+      const settings = getSchoolSettings();
+      const schoolLogo = settings?.LOGO_URL || '';
+      const schoolName = settings?.SCHOOL_NAME || 'MAS MUHAMMADIYAH CIKARAMAS';
+
+      const sheetHtml = `
+        <div style="text-align: center; font-family: system-ui, -apple-system, sans-serif; padding: 20px;">
+          <div style="border-bottom: 2px solid #000; padding-bottom: 12px; margin-bottom: 16px; display: flex; align-items: center; justify-content: center; gap: 16px;">
+            ${schoolLogo ? `<img src="${schoolLogo}" alt="Logo" style="width: 58px; height: 58px; object-fit: contain;" />` : ''}
+            <div style="text-align: center;">
+              <div style="font-size: 16pt; font-weight: 800; color: #065f46; text-transform: uppercase;">${schoolName}</div>
+              <div style="font-size: 11pt; color: #374151; font-weight: 600; margin-top: 2px;">VERIFIKASI KEHADIRAN FISIK CBT & ASESMEN MADRASAH</div>
+              <div style="font-size: 9pt; color: #6b7280; margin-top: 2px;">Tanggal Berlaku: <b>${todayStr}</b></div>
+            </div>
+          </div>
+
+          <div style="border: 2px dashed #059669; border-radius: 12px; padding: 20px; display: inline-block; background: #f0fdf4; max-width: 480px; margin: 10px auto;">
+            <div style="font-size: 11pt; font-weight: 700; color: #065f46; text-transform: uppercase;">
+              Pindai Barcode / Masukkan Kode Harian
+            </div>
+            <img src="${url}" alt="QR Presensi" style="width: 240px; height: 240px; margin: 12px auto; display: block;" />
+            <div style="font-size: 9pt; color: #4b5563;">Atau Masukkan Kode 6-Karakter Pengawas:</div>
+            <div style="font-size: 28pt; font-weight: 800; letter-spacing: 4px; color: #065f46; background: #ffffff; padding: 8px 20px; border-radius: 8px; margin: 12px auto; border: 2px solid #059669; display: inline-block;">
+              ${dailyCode}
             </div>
 
-            <div class="card">
-              <div style="font-size: 12pt; font-weight: bold; color: #0052CC; text-transform: uppercase;">
-                Pindai Barcode / Masukkan Kode Harian
-              </div>
-              <img class="qr-img" src="${url}" alt="QR Presensi" />
-              <div style="font-size: 10pt; color: #6C757D;">Atau Masukkan Kode 6-Karakter Pengawas:</div>
-              <div class="code-box">${dailyCode}</div>
-
-              <div class="instructions">
-                <b>Instruksi Peserta Ujian:</b>
-                <ol style="margin: 8px 0 0 18px; padding: 0;">
-                  <li>Pastikan Anda berada di lingkungan madrasah / ruang ujian resmi.</li>
-                  <li>Buka aplikasi CBT Siswa &rarr; Menu <b>Jadwal Ujian Mapel</b>.</li>
-                  <li>Klik tombol <b>"Scan QR / Masukkan Kode Presensi Sekolah"</b>.</li>
-                  <li>Arahkan kamera ke barcode di atas atau ketik kode <b>${dailyCode}</b>.</li>
-                  <li>Status kehadiran akan terverifikasi dan tombol ujian aktif.</li>
-                </ol>
-              </div>
+            <div style="font-size: 9.5pt; color: #1f2937; line-height: 1.5; text-align: left; background: #ffffff; padding: 12px; border-radius: 8px; border: 1px solid #d1d5db; margin-top: 12px;">
+              <b>Instruksi Peserta Ujian:</b>
+              <ol style="margin: 6px 0 0 16px; padding: 0;">
+                <li>Pastikan Anda berada di lingkungan madrasah / ruang ujian resmi.</li>
+                <li>Buka aplikasi CBT Siswa &rarr; Menu <b>Jadwal Ujian Mapel</b>.</li>
+                <li>Klik tombol <b>"Scan QR / Masukkan Kode Presensi Sekolah"</b>.</li>
+                <li>Arahkan kamera ke barcode di atas atau ketik kode <b>${dailyCode}</b>.</li>
+                <li>Status kehadiran akan terverifikasi dan tombol ujian aktif.</li>
+              </ol>
             </div>
+          </div>
 
-            <div class="footer">
-              Dicetak pada: ${new Date().toLocaleString('id-ID')} &bull; Sistem CBT Integritas MAS Muhammadiyah Cikaramas
-            </div>
-            <script>
-              window.onload = function() { window.print(); };
-            </script>
-          </body>
-        </html>
-      `);
-      printWindow.document.close();
+          <div style="margin-top: 24px; font-size: 8.5pt; color: #6b7280;">
+            Dicetak pada: ${new Date().toLocaleString('id-ID')} &bull; Sistem CBT Integritas MAS Muhammadiyah Cikaramas
+          </div>
+        </div>
+      `;
+
+      printElementReliable(sheetHtml, {
+        title: `Lembar_Barcode_Presensi_${todayStr}`,
+        paperSize: 'A4',
+        orientation: 'portrait'
+      });
     });
   };
 
@@ -303,7 +296,7 @@ export const DailySchoolPresenceModal: React.FC<DailySchoolPresenceModalProps> =
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
         {/* Modal Header */}
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-blue-900 via-blue-800 to-indigo-900 text-white">
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-emerald-900 via-emerald-800 to-teal-900 text-white">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center border border-white/20">
               <QrCode className="w-5 h-5 text-amber-300" />
