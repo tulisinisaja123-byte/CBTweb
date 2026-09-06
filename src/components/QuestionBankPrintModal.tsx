@@ -1142,7 +1142,9 @@ export const QuestionBankPrintModal: React.FC<QuestionBankPrintModalProps> = ({
                                                 {leftItem ? (
                                                   <div className="flex items-start gap-1.5" style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
                                                     <span className="font-bold shrink-0" style={{ fontWeight: 'bold', flexShrink: 0 }}>{leftItem.key}.</span>
-                                                    <span>{leftItem.text}</span>
+                                                    <div className="flex-1">
+                                                      <RichContentRenderer content={leftItem.text} inline />
+                                                    </div>
                                                   </div>
                                                 ) : (
                                                   <span className="text-gray-400">-</span>
@@ -1153,7 +1155,9 @@ export const QuestionBankPrintModal: React.FC<QuestionBankPrintModalProps> = ({
                                                 {rightItem ? (
                                                   <div className="flex items-start gap-1.5" style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
                                                     <span className="font-bold shrink-0" style={{ fontWeight: 'bold', flexShrink: 0 }}>{rightItem.key}.</span>
-                                                    <span>{rightItem.text}</span>
+                                                    <div className="flex-1">
+                                                      <RichContentRenderer content={rightItem.text} inline />
+                                                    </div>
                                                   </div>
                                                 ) : (
                                                   <span className="text-gray-400">-</span>

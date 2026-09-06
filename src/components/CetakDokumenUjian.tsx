@@ -24,7 +24,7 @@ import {
   Edit3
 } from 'lucide-react';
 import { Exam, PrintData, ClassItem, AssessmentType, SchoolSettings, User } from '../types';
-import { getPrintData, getStudentCardsPrintData, getClasses, getAssessmentTypes } from '../services/lmsStorage';
+import { getPrintData, getStudentCardsPrintData, getClasses, getAssessmentTypes, matchClassFlexible } from '../services/lmsStorage';
 
 // =========================================================================
 // VECTOR SVG DUMMY QR CODE GENERATOR (VECTOR SHARP IN PRINT)
@@ -191,25 +191,84 @@ export const SvgBarcode: React.FC<{
 };
 
 // =========================================================================
+// TIME & DATE FORMATTING UTILITIES FOR EXAM DOCUMENTS
+// =========================================================================
+export function calculateEndTime(startTimeStr?: string, durationMin?: number): string {
+  const start = (startTimeStr || '07:30').trim();
+  const duration = typeof durationMin === 'number' && durationMin > 0 ? durationMin : 90;
+  const parts = start.split(':');
+  if (parts.length >= 2) {
+    const startHour = parseInt(parts[0], 10);
+    const startMinute = parseInt(parts[1], 10);
+    if (!isNaN(startHour) && !isNaN(startMinute)) {
+      const totalStartMin = startHour * 60 + startMinute;
+      const totalEndMin = totalStartMin + duration;
+      const endHour = Math.floor(totalEndMin / 60) % 24;
+      const endMinute = totalEndMin % 60;
+      return `${String(endHour).padStart(2, '0')}:${String(endMinute).padStart(2, '0')}`;
+    }
+  }
+  return '09:00';
+}
+
+export function formatExamTimeRange(startTimeStr?: string, durationMin?: number): string {
+  const start = (startTimeStr || '07:30').trim();
+  const duration = typeof durationMin === 'number' && durationMin > 0 ? durationMin : 90;
+  const end = calculateEndTime(start, duration);
+  return `${start} - ${end} WIB (${duration} Menit)`;
+}
+
+export function formatCleanSemester(raw?: string): string {
+  if (!raw) return 'Semester Ganjil';
+  let s = raw.trim();
+  // Strip redundant leading "semester" case-insensitively
+  s = s.replace(/^semester\s+/i, '').trim();
+  if (s.includes('1 & 2') || s.includes('1-2') || s.includes('1 dan 2')) {
+    return 'Semester Ganjil (1)';
+  }
+  if (s.toLowerCase() === 'ganjil' || s === '1' || s.toLowerCase() === 'smt 1') {
+    return 'Semester Ganjil (1)';
+  }
+  if (s.toLowerCase() === 'genap' || s === '2' || s.toLowerCase() === 'smt 2') {
+    return 'Semester Genap (2)';
+  }
+  return `Semester ${s}`;
+}
+
+// =========================================================================
 // PROPS INTERFACE
 // =========================================================================
 export interface CetakDokumenUjianProps {
   token: string;
   exams: Exam[];
+  users?: User[];
+  classes?: ClassItem[];
+  subjects?: any[];
+  assessmentTypes?: AssessmentType[];
+  settings?: SchoolSettings;
   defaultDocType?: 'cards' | 'minutes' | 'attendance';
+  currentUser?: User;
 }
 
 export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
   token,
   exams,
-  defaultDocType = 'cards'
+  users: propUsers,
+  classes: propClasses,
+  subjects: propSubjects,
+  assessmentTypes: propAssessmentTypes,
+  settings: propSettings,
+  defaultDocType = 'cards',
+  currentUser
 }) => {
+  const isStudent = currentUser?.ROLE === 'STUDENT';
+
   // Navigation / Active Document Tab
-  const [docType, setDocType] = useState<'cards' | 'minutes' | 'attendance'>(defaultDocType);
+  const [docType, setDocType] = useState<'cards' | 'minutes' | 'attendance'>(isStudent ? 'cards' : defaultDocType);
 
   // Filters State
   const [selectedExamId, setSelectedExamId] = useState<string>(exams?.[0]?.ID || '');
-  const [selectedClassId, setSelectedClassId] = useState<string>('ALL');
+  const [selectedClassId, setSelectedClassId] = useState<string>(isStudent && currentUser?.CLASS_ID ? currentUser.CLASS_ID : 'ALL');
   const [selectedAssessmentTypeId, setSelectedAssessmentTypeId] = useState<string>('ALL');
   const [selectedRoom, setSelectedRoom] = useState<string>('ALL');
   const [selectedSession, setSelectedSession] = useState<string>('ALL');
@@ -241,15 +300,27 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
 
   // Load classes & assessment types
   useEffect(() => {
-    try {
-      const cls = getClasses(token);
-      setClassesList(cls);
-      const at = getAssessmentTypes();
-      setAssessmentTypesList(at);
-    } catch (err) {
-      console.error('Failed to load classes or assessment types', err);
+    if (propClasses && propClasses.length > 0) {
+      setClassesList(propClasses);
+    } else {
+      try {
+        const cls = getClasses(token);
+        setClassesList(cls);
+      } catch (err) {
+        console.error('Failed to load classes', err);
+      }
     }
-  }, [token]);
+    if (propAssessmentTypes && propAssessmentTypes.length > 0) {
+      setAssessmentTypesList(propAssessmentTypes);
+    } else {
+      try {
+        const at = getAssessmentTypes();
+        setAssessmentTypesList(at);
+      } catch (err) {
+        console.error('Failed to load assessment types', err);
+      }
+    }
+  }, [token, propClasses, propAssessmentTypes]);
 
   // Sync selected exam id if exams change
   useEffect(() => {
@@ -262,20 +333,23 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
   const handleGenerateData = () => {
     setErrorMessage('');
     try {
+      const options = {
+        classId: selectedClassId,
+        assessmentTypeId: selectedAssessmentTypeId,
+        examId: selectedExamId,
+        overrideUsers: propUsers,
+        overrideClasses: classesList.length > 0 ? classesList : propClasses,
+        overrideSubjects: propSubjects,
+        overrideSettings: propSettings,
+        overrideExams: exams
+      };
+
       if (docType === 'cards') {
-        const data = getStudentCardsPrintData(token, {
-          classId: selectedClassId,
-          assessmentTypeId: selectedAssessmentTypeId,
-          examId: selectedExamId
-        });
+        const data = getStudentCardsPrintData(token, options);
         setPrintData(data);
       } else {
-        if (!selectedExamId && exams.length > 0) {
-          setSelectedExamId(exams[0].ID);
-        }
-        const examIdToUse = selectedExamId || exams[0]?.ID;
-        if (!examIdToUse) throw new Error('Silakan pilih jadwal ujian terlebih dahulu.');
-        const data = getPrintData(token, docType, examIdToUse);
+        const examIdToUse = selectedExamId || exams[0]?.ID || 'EXAM-ALL';
+        const data = getPrintData(token, docType, examIdToUse, options);
         setPrintData(data);
 
         // Auto-initialize Berita Acara attendance count
@@ -293,12 +367,10 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
     }
   };
 
-  // Initial generation
+  // Re-generate data automatically whenever filters, props or docType changes
   useEffect(() => {
-    if (exams.length > 0 && !printData) {
-      handleGenerateData();
-    }
-  }, [exams, docType]);
+    handleGenerateData();
+  }, [exams, propUsers, propClasses, propSubjects, propSettings, docType, selectedExamId, selectedClassId, selectedAssessmentTypeId, classesList]);
 
   // Native window.print() handler
   const handlePrint = () => {
@@ -309,31 +381,62 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
     }
   };
 
+  // Class lookup map for robust class resolution
+  const classMap = useMemo(() => {
+    const map = new Map<string, string>();
+    classesList.forEach(c => {
+      if (c.ID) map.set(c.ID, c.NAME || c.ID);
+      if (c.NAME) map.set(c.NAME, c.ID);
+    });
+    return map;
+  }, [classesList]);
+
+  // Current selected class name label
+  const currentSelectedClassName = useMemo(() => {
+    if (selectedClassId === 'ALL') return '';
+    const found = classesList.find(c => c.ID === selectedClassId || c.NAME === selectedClassId);
+    return found ? (found.NAME.startsWith('Kelas ') ? found.NAME : `Kelas ${found.NAME}`) : selectedClassId;
+  }, [selectedClassId, classesList]);
+
   // Filter students based on room / session if selected
   const filteredStudents = useMemo(() => {
     if (!printData?.students) return [];
     let list = printData.students;
 
+    // Jika user adalah siswa, tampilkan khusus kartu peserta milik dirinya sendiri
+    if (isStudent && currentUser) {
+      const myCard = list.filter(st =>
+        st.ID === currentUser.ID ||
+        (st.USERNAME && currentUser.USERNAME && st.USERNAME.toLowerCase() === currentUser.USERNAME.toLowerCase())
+      );
+      if (myCard.length > 0) return myCard;
+      return [currentUser];
+    }
+
+    // Filter by class if specific class selected
     if (selectedClassId !== 'ALL') {
-      list = list.filter(st => st.CLASS_ID === selectedClassId);
+      const classFiltered = list.filter(st => matchClassFlexible(st.CLASS_ID, selectedClassId, classMap));
+      if (classFiltered.length > 0) list = classFiltered;
     }
 
     if (selectedRoom !== 'ALL' && printData.studentSchedules) {
-      list = list.filter(st => {
+      const roomFiltered = list.filter(st => {
         const sch = printData.studentSchedules?.[st.ID] || [];
         return sch.some(s => (s.ROOM || 'Ruang 01') === selectedRoom);
       });
+      if (roomFiltered.length > 0) list = roomFiltered;
     }
 
     if (selectedSession !== 'ALL' && printData.studentSchedules) {
-      list = list.filter(st => {
+      const sessionFiltered = list.filter(st => {
         const sch = printData.studentSchedules?.[st.ID] || [];
         return sch.some(s => (s.SESSION || 'Sesi 1') === selectedSession);
       });
+      if (sessionFiltered.length > 0) list = sessionFiltered;
     }
 
     return list;
-  }, [printData, selectedClassId, selectedRoom, selectedSession]);
+  }, [printData, selectedClassId, selectedRoom, selectedSession, classMap]);
 
   // Available Rooms and Sessions in loaded data
   const availableRooms = useMemo(() => {
@@ -366,16 +469,6 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
     return Array.from(sessions);
   }, [printData]);
 
-  // Chunk students into groups of 4 or 6 for clean A4 multi-page printing
-  const studentPages = useMemo(() => {
-    const chunkSize = cardGridMode === 'GRID_6' ? 6 : cardGridMode === 'GRID_4' ? 4 : 2;
-    const pages: User[][] = [];
-    for (let i = 0; i < filteredStudents.length; i += chunkSize) {
-      pages.push(filteredStudents.slice(i, i + chunkSize));
-    }
-    return pages;
-  }, [filteredStudents, cardGridMode]);
-
   // School Settings default fallback
   const schoolSettings: SchoolSettings = printData?.settings || {
     SCHOOL_NAME: 'MAS MUHAMMADIYAH CIKARAMAS',
@@ -383,10 +476,155 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
     SCHOOL_PHONE: '(0261) 882190',
     SCHOOL_CITY: 'Sumedang',
     SCHOOL_YEAR: '2026/2027',
-    SEMESTER: 'GANJIL',
+    SEMESTER: '1 (Ganjil)',
     PRINCIPAL_NAME: 'Ai Sukaesih, S.Pd',
     PRINCIPAL_TITLE: 'Kepala Madrasah',
     PRINCIPAL_NIP: '1281201'
+  };
+
+  // Clean, professional semester label without duplicated "Semester SEMESTER"
+  const cleanSemesterLabel = useMemo(() => {
+    return formatCleanSemester(schoolSettings.SEMESTER);
+  }, [schoolSettings.SEMESTER]);
+
+  // Derive clean assessment title from assessment types or exam info (Never output "Bank Soal")
+  const assessmentTitle = useMemo(() => {
+    // 1. From selected filter if not ALL
+    if (selectedAssessmentTypeId && selectedAssessmentTypeId !== 'ALL') {
+      const found = assessmentTypesList.find(
+        at => at.ID === selectedAssessmentTypeId || at.CODE === selectedAssessmentTypeId
+      );
+      if (found?.NAME) return found.NAME;
+    }
+    // 2. From exam's assessment type
+    const examAtId = printData?.exam?.ASSESSMENT_TYPE_ID;
+    if (examAtId) {
+      const found = assessmentTypesList.find(
+        at => at.ID === examAtId || at.CODE === examAtId || at.NAME?.toLowerCase() === examAtId.toLowerCase()
+      );
+      if (found?.NAME) return found.NAME;
+    }
+    // 3. Fallback to clean exam title if not starting with "Bank Soal"
+    const rawTitle = printData?.exam?.TITLE;
+    if (rawTitle && !rawTitle.toLowerCase().includes('bank soal')) {
+      return rawTitle;
+    }
+    return 'Sumatif Akhir Semester (SAS)';
+  }, [selectedAssessmentTypeId, printData?.exam, assessmentTypesList]);
+
+  // Group students by class/rombel for separated presentation and printing
+  const studentsByClass = useMemo(() => {
+    const groups: { classId: string; className: string; students: User[] }[] = [];
+    const map = new Map<string, User[]>();
+
+    filteredStudents.forEach(st => {
+      const rawClassId = st.CLASS_ID || 'UNASSIGNED';
+      const cName =
+        (st as any).CLASS_NAME ||
+        classMap.get(st.CLASS_ID || '') ||
+        (st.CLASS_ID ? (st.CLASS_ID.startsWith('KLS-') ? st.CLASS_ID.replace(/^KLS-/i, '') : st.CLASS_ID) : 'Kelas Lain');
+      const normalizedClassName = cName.startsWith('Kelas ') ? cName : `Kelas ${cName}`;
+      const key = `${rawClassId}___${normalizedClassName}`;
+      if (!map.has(key)) {
+        map.set(key, []);
+      }
+      map.get(key)!.push(st);
+    });
+
+    const sortedKeys = Array.from(map.keys()).sort((a, b) => {
+      const nameA = a.split('___')[1] || a;
+      const nameB = b.split('___')[1] || b;
+      return nameA.localeCompare(nameB, 'id-ID', { numeric: true });
+    });
+
+    sortedKeys.forEach(key => {
+      const [cId, cName] = key.split('___');
+      const groupStudents = map.get(key)!;
+      // Sort students alphabetically by name within each class
+      groupStudents.sort((a, b) => (a.NAME || '').localeCompare(b.NAME || '', 'id-ID'));
+      groups.push({
+        classId: cId,
+        className: cName,
+        students: groupStudents
+      });
+    });
+
+    return groups;
+  }, [filteredStudents, classMap]);
+
+  // Chunk students into groups of 4 or 6 for clean A4 multi-page printing
+  const studentPages = useMemo(() => {
+    const chunkSize = cardGridMode === 'GRID_6' ? 6 : cardGridMode === 'GRID_4' ? 4 : 2;
+    const pages: { pageIndex: number; className: string; students: User[] }[] = [];
+
+    if (selectedClassId === 'ALL') {
+      let globalPage = 1;
+      studentsByClass.forEach(group => {
+        for (let i = 0; i < group.students.length; i += chunkSize) {
+          pages.push({
+            pageIndex: globalPage++,
+            className: group.className,
+            students: group.students.slice(i, i + chunkSize)
+          });
+        }
+      });
+      return pages;
+    }
+
+    for (let i = 0; i < filteredStudents.length; i += chunkSize) {
+      pages.push({
+        pageIndex: Math.floor(i / chunkSize) + 1,
+        className: currentSelectedClassName || 'Kelas',
+        students: filteredStudents.slice(i, i + chunkSize)
+      });
+    }
+    return pages;
+  }, [filteredStudents, studentsByClass, cardGridMode, selectedClassId, currentSelectedClassName]);
+
+  // Auto-sync attendance counts when total filtered students count changes
+  useEffect(() => {
+    if (filteredStudents.length > 0) {
+      setBeritaAcaraData(prev => {
+        if (prev.jumlahHadir + prev.jumlahTidakHadir !== filteredStudents.length) {
+          return {
+            ...prev,
+            jumlahHadir: filteredStudents.length,
+            jumlahTidakHadir: 0
+          };
+        }
+        return prev;
+      });
+    } else {
+      setBeritaAcaraData(prev => ({
+        ...prev,
+        jumlahHadir: 0,
+        jumlahTidakHadir: 0
+      }));
+    }
+  }, [filteredStudents.length]);
+
+  // When user edits "Jumlah Hadir", automatically update "Tidak Hadir" = Total - Hadir
+  const handleHadirChange = (valStr: string) => {
+    const total = filteredStudents.length;
+    const hadir = Math.max(0, Math.min(total, parseInt(valStr, 10) || 0));
+    const tidakHadir = Math.max(0, total - hadir);
+    setBeritaAcaraData(prev => ({
+      ...prev,
+      jumlahHadir: hadir,
+      jumlahTidakHadir: tidakHadir
+    }));
+  };
+
+  // When user edits "Tidak Hadir" (e.g. types 5), automatically reduce "Jumlah Hadir" = Total - Tidak Hadir
+  const handleTidakHadirChange = (valStr: string) => {
+    const total = filteredStudents.length;
+    const tidakHadir = Math.max(0, Math.min(total, parseInt(valStr, 10) || 0));
+    const hadir = Math.max(0, total - tidakHadir);
+    setBeritaAcaraData(prev => ({
+      ...prev,
+      jumlahHadir: hadir,
+      jumlahTidakHadir: tidakHadir
+    }));
   };
 
   return (
@@ -447,40 +685,44 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
             }`}
           >
             <CreditCard className="w-4 h-4" />
-            <span>Kartu Peserta Ujian (Grid 4–6)</span>
+            <span>{isStudent ? 'Kartu Peserta Ujian Saya' : 'Kartu Peserta Ujian (Grid 4–6)'}</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setDocType('minutes');
-              setPrintData(null);
-            }}
-            className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
-              docType === 'minutes'
-                ? 'bg-white text-[#0052CC] shadow-xs border border-[#CED4DA]'
-                : 'text-[#495057] hover:text-[#1A1C1E]'
-            }`}
-          >
-            <FileCheck2 className="w-4 h-4" />
-            <span>Berita Acara Pelaksanaan</span>
-          </button>
+          {!isStudent && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setDocType('minutes');
+                  setPrintData(null);
+                }}
+                className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                  docType === 'minutes'
+                    ? 'bg-white text-[#0052CC] shadow-xs border border-[#CED4DA]'
+                    : 'text-[#495057] hover:text-[#1A1C1E]'
+                }`}
+              >
+                <FileCheck2 className="w-4 h-4" />
+                <span>Berita Acara Pelaksanaan</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setDocType('attendance');
-              setPrintData(null);
-            }}
-            className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
-              docType === 'attendance'
-                ? 'bg-white text-[#0052CC] shadow-xs border border-[#CED4DA]'
-                : 'text-[#495057] hover:text-[#1A1C1E]'
-            }`}
-          >
-            <ClipboardList className="w-4 h-4" />
-            <span>Daftar Hadir Siswa</span>
-          </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDocType('attendance');
+                  setPrintData(null);
+                }}
+                className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                  docType === 'attendance'
+                    ? 'bg-white text-[#0052CC] shadow-xs border border-[#CED4DA]'
+                    : 'text-[#495057] hover:text-[#1A1C1E]'
+                }`}
+              >
+                <ClipboardList className="w-4 h-4" />
+                <span>Daftar Hadir Siswa</span>
+              </button>
+            </>
+          )}
         </div>
 
         {/* Filter Configuration Card */}
@@ -661,28 +903,35 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                   placeholder="Contoh: Ujian berjalan tertib dan lancar..."
                 />
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="font-semibold text-[#1A1C1E] block mb-1">Jumlah Hadir:</label>
-                  <input
-                    type="number"
-                    value={beritaAcaraData.jumlahHadir}
-                    onChange={e =>
-                      setBeritaAcaraData(prev => ({ ...prev, jumlahHadir: parseInt(e.target.value, 10) || 0 }))
-                    }
-                    className="w-full px-2.5 py-1.5 bg-white border border-[#CED4DA] rounded-lg"
-                  />
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="font-bold text-[#1A1C1E]">
+                    Kehadiran Peserta (Total: <span className="text-[#0052CC] font-extrabold">{filteredStudents.length} Siswa</span>):
+                  </span>
                 </div>
-                <div>
-                  <label className="font-semibold text-[#1A1C1E] block mb-1">Tidak Hadir:</label>
-                  <input
-                    type="number"
-                    value={beritaAcaraData.jumlahTidakHadir}
-                    onChange={e =>
-                      setBeritaAcaraData(prev => ({ ...prev, jumlahTidakHadir: parseInt(e.target.value, 10) || 0 }))
-                    }
-                    className="w-full px-2.5 py-1.5 bg-white border border-[#CED4DA] rounded-lg"
-                  />
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="font-semibold text-emerald-800 block mb-1">Jumlah Hadir:</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={filteredStudents.length}
+                      value={beritaAcaraData.jumlahHadir}
+                      onChange={e => handleHadirChange(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-white border border-emerald-300 rounded-lg font-bold text-emerald-800 focus:border-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-semibold text-rose-800 block mb-1">Tidak Hadir:</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={filteredStudents.length}
+                      value={beritaAcaraData.jumlahTidakHadir}
+                      onChange={e => handleTidakHadirChange(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-white border border-rose-300 rounded-lg font-bold text-rose-800 focus:border-rose-500"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -695,7 +944,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
       {/* ========================================================================= */}
       {printData ? (
         <div
-          className="printable-sheet bg-white max-w-4xl mx-auto shadow-sm border border-[#DEE2E6] rounded-2xl p-6 sm:p-10 text-black leading-normal"
+          className="printable-sheet bg-white max-w-4xl mx-auto shadow-sm border border-[#DEE2E6] rounded-2xl p-3 sm:p-6 md:p-10 text-black leading-normal overflow-x-auto"
           style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}
         >
           {/* ===================================================================== */}
@@ -708,7 +957,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                   Tidak ada data siswa yang cocok dengan filter yang dipilih.
                 </div>
               ) : (
-                studentPages.map((pageStudents, pageIdx) => (
+                studentPages.map((pageItem, pageIdx) => (
                   <div
                     key={pageIdx}
                     className={`print-page-chunk ${
@@ -717,8 +966,10 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                   >
                     {/* Page Header Indicator (Screen view only) */}
                     <div className="no-print pb-2 mb-3 border-b border-slate-200 flex items-center justify-between text-xs text-slate-500 font-semibold">
-                      <span>Lembar Halaman Cetak #{pageIdx + 1}</span>
-                      <span>{pageStudents.length} Kartu Siswa di Halaman Ini</span>
+                      <span className="font-bold text-[#0052CC]">
+                        Lembar Halaman Cetak #{pageItem.pageIndex} ({pageItem.className})
+                      </span>
+                      <span>{pageItem.students.length} Kartu Siswa di Halaman Ini</span>
                     </div>
 
                     {/* Student Cards Grid Layout */}
@@ -731,12 +982,15 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                           : 'space-y-6'
                       }
                     >
-                      {pageStudents.map((st, cardIdx) => {
+                      {pageItem.students.map((st, cardIdx) => {
                         const schedules = printData.studentSchedules?.[st.ID] || [];
                         const primaryRoom = schedules[0]?.ROOM || 'Ruang 01';
                         const primarySession = schedules[0]?.SESSION || 'Sesi 1';
-                        const nisn = st.USERNAME || `2026${String(cardIdx + 1).padStart(4, '0')}`;
-                        const noPeserta = `04-${st.CLASS_ID?.replace('KLS-', '') || 'X'}-${String(cardIdx + 1).padStart(3, '0')}`;
+                        const nisn = st.NISN || st.NIS || st.USERNAME || `2026${String(cardIdx + 1).padStart(4, '0')}`;
+                        const className = (st as any).CLASS_NAME || classMap.get(st.CLASS_ID || '') || (st.CLASS_ID ? `Kelas ${st.CLASS_ID.replace(/^KLS-/i, '')}` : 'Semua Kelas');
+                        const classCode = (classMap.get(st.CLASS_ID || '') || st.CLASS_ID || 'X').replace(/^kelas\s*/i, '').replace(/^kls-/i, '').replace(/[^a-zA-Z0-9]/g, '');
+                        const noPeserta = `04-${classCode || 'X'}-${String(cardIdx + 1).padStart(3, '0')}`;
+                        const passwordDisplay = (st.PASSWORD_HASH && !st.PASSWORD_HASH.startsWith('$2') && !st.PASSWORD_HASH.includes('pbkdf2')) ? st.PASSWORD_HASH : 'Siswa123!';
 
                         return (
                           <div
@@ -765,7 +1019,7 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                                     MAS MUHAMMADIYAH CIKARAMAS
                                   </div>
                                   <div className="text-[9px] font-bold text-[#0052CC]">
-                                    KARTU PESERTA UJIAN / CBT 2026/2027
+                                    KARTU PESERTA {assessmentTitle.toUpperCase()} • TP {schoolSettings.SCHOOL_YEAR || '2026/2027'}
                                   </div>
                                 </div>
                               </div>
@@ -778,36 +1032,34 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                             </div>
 
                             {/* DATA SISWA & FOTO & QR CODE */}
-                            <div className="py-2.5 flex items-start justify-between gap-3">
+                            <div className="py-2.5 flex items-start justify-between gap-2 sm:gap-3">
                               {/* Rincian Identitas */}
-                              <div className="flex-1 space-y-1">
+                              <div className="flex-1 min-w-0 space-y-1">
                                 <table className="w-full text-left leading-snug">
                                   <tbody>
                                     <tr>
-                                      <td className="w-20 text-slate-700 font-semibold py-0.5">Nama Siswa</td>
-                                      <td className="font-bold text-black uppercase py-0.5">: {st.NAME}</td>
+                                      <td className="w-20 text-slate-700 font-semibold py-0.5 shrink-0">Nama Siswa</td>
+                                      <td className="font-bold text-black uppercase py-0.5 break-words">: {st.NAME}</td>
                                     </tr>
                                     <tr>
-                                      <td className="text-slate-700 font-semibold py-0.5">NISN / NIS</td>
-                                      <td className="font-mono font-bold py-0.5">: {nisn}</td>
+                                      <td className="text-slate-700 font-semibold py-0.5 shrink-0">NISN / NIS</td>
+                                      <td className="font-mono font-bold py-0.5 break-all">: {nisn}</td>
                                     </tr>
                                     <tr>
-                                      <td className="text-slate-700 font-semibold py-0.5">Username CBT</td>
-                                      <td className="font-mono font-bold text-black py-0.5">: {st.USERNAME}</td>
+                                      <td className="text-slate-700 font-semibold py-0.5 shrink-0">Username CBT</td>
+                                      <td className="font-mono font-bold text-black py-0.5 break-all">: {st.USERNAME}</td>
                                     </tr>
                                     <tr>
-                                      <td className="text-slate-700 font-semibold py-0.5">Password CBT</td>
-                                      <td className="font-mono font-bold text-black py-0.5">: Siswa123!</td>
+                                      <td className="text-slate-700 font-semibold py-0.5 shrink-0">Password CBT</td>
+                                      <td className="font-mono font-bold text-black py-0.5 break-all">: {passwordDisplay}</td>
                                     </tr>
                                     <tr>
-                                      <td className="text-slate-700 font-semibold py-0.5">Kelas / Rombel</td>
-                                      <td className="font-bold py-0.5">
-                                        : {st.CLASS_ID?.replace('KLS-', 'Kelas ') || 'Kelas X'}
-                                      </td>
+                                      <td className="text-slate-700 font-semibold py-0.5 shrink-0">Kelas / Rombel</td>
+                                      <td className="font-bold py-0.5 break-words">: {className}</td>
                                     </tr>
                                     <tr>
-                                      <td className="text-slate-700 font-semibold py-0.5">Ruang & Sesi</td>
-                                      <td className="font-bold py-0.5 text-[#0052CC]">
+                                      <td className="text-slate-700 font-semibold py-0.5 shrink-0">Ruang & Sesi</td>
+                                      <td className="font-bold py-0.5 text-[#0052CC] break-words">
                                         : {primaryRoom} / {primarySession}
                                       </td>
                                     </tr>
@@ -828,6 +1080,33 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                                 <SvgQrCode value={`CBT-MASC-${st.ID}-${nisn}`} size={cardGridMode === 'GRID_6' ? 44 : 50} />
                               </div>
                             </div>
+
+                            {/* TABEL JADWAL JIKA MODE WITH_SCHEDULE */}
+                            {cardGridMode === 'WITH_SCHEDULE' && schedules.length > 0 && (
+                              <div className="py-2 border-t border-black">
+                                <div className="text-[10px] font-bold uppercase mb-1">Jadwal Ujian Siswa:</div>
+                                <table className="w-full text-[10px] border border-black border-collapse">
+                                  <thead>
+                                    <tr className="bg-slate-100 border-b border-black">
+                                      <th className="p-1 border-r border-black text-left">Mata Pelajaran</th>
+                                      <th className="p-1 border-r border-black text-center">Tanggal</th>
+                                      <th className="p-1 border-r border-black text-center">Waktu</th>
+                                      <th className="p-1 text-center">Ruang/Sesi</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {schedules.slice(0, 8).map((sc, scIdx) => (
+                                      <tr key={scIdx} className="border-b border-black last:border-0">
+                                        <td className="p-1 border-r border-black font-medium">{sc.SUBJECT_NAME}</td>
+                                        <td className="p-1 border-r border-black text-center font-mono">{sc.FORMATTED_DATE || sc.EXAM_DATE || '-'}</td>
+                                        <td className="p-1 border-r border-black text-center font-mono">{sc.START_TIME || '07:30'} - {calculateEndTime(sc.START_TIME, sc.DURATION_MIN)}</td>
+                                        <td className="p-1 text-center">{sc.ROOM || 'R.01'} / {sc.SESSION || 'S.1'}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
 
                             {/* BARCODE & SIGNATURE FOOTER */}
                             <div className="border-t border-black pt-2 mt-auto">
@@ -895,10 +1174,10 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
               {/* JUDUL BERITA ACARA */}
               <div className="text-center space-y-1 pt-1">
                 <h3 className="text-sm sm:text-base font-extrabold uppercase tracking-wide underline text-black">
-                  BERITA ACARA PELAKSANAAN UJIAN / ASESMEN CBT
+                  BERITA ACARA PELAKSANAAN {assessmentTitle.toUpperCase()}
                 </h3>
                 <div className="text-[11px] font-semibold text-slate-800">
-                  Tahun Pelajaran {schoolSettings.SCHOOL_YEAR || '2026/2027'} - Semester {schoolSettings.SEMESTER?.toUpperCase() || 'GANJIL'}
+                  Tahun Pelajaran {schoolSettings.SCHOOL_YEAR || '2026/2027'} - {cleanSemesterLabel}
                 </div>
               </div>
 
@@ -920,32 +1199,34 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                       </td>
                     </tr>
                     <tr className="border-b border-black">
-                      <td className="p-2 font-semibold bg-slate-100 border-r border-black">Judul / Paket Ujian</td>
-                      <td className="p-2 font-semibold">{printData.exam?.TITLE || 'Asesmen Akhir Semester'}</td>
+                      <td className="p-2 font-semibold bg-slate-100 border-r border-black">Jenis Penilaian / Ujian</td>
+                      <td className="p-2 font-bold text-[#0052CC]">{assessmentTitle}</td>
                     </tr>
                     <tr className="border-b border-black">
                       <td className="p-2 font-semibold bg-slate-100 border-r border-black">Kelas / Rombel</td>
                       <td className="p-2 font-semibold">
-                        {printData.exam?.CLASS_NAME || 'Semua Kelas'}
+                        {selectedClassId === 'ALL'
+                          ? `Semua Kelas (${studentsByClass.map(g => g.className).join(', ') || 'Semua Rombel'})`
+                          : (currentSelectedClassName || printData.exam?.CLASS_NAME || 'Semua Kelas')}
                       </td>
                     </tr>
                     <tr className="border-b border-black">
                       <td className="p-2 font-semibold bg-slate-100 border-r border-black">Hari & Tanggal Ujian</td>
                       <td className="p-2 font-mono">
-                        {printData.exam?.FORMATTED_DATE || new Date().toISOString().slice(0, 10)}
+                        {printData.exam?.FORMATTED_DATE || new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                       </td>
                     </tr>
                     <tr className="border-b border-black">
                       <td className="p-2 font-semibold bg-slate-100 border-r border-black">Waktu & Durasi</td>
-                      <td className="p-2 font-mono">
-                        {printData.exam?.START_TIME || '07:30'} WIB - selesai ({printData.exam?.DURATION_MIN || 90} Menit)
+                      <td className="p-2 font-mono font-bold">
+                        {formatExamTimeRange(printData.exam?.START_TIME, printData.exam?.DURATION_MIN)}
                       </td>
                     </tr>
                     <tr className="border-b border-black">
                       <td className="p-2 font-semibold bg-slate-100 border-r border-black">Ruang & Sesi</td>
                       <td className="p-2 font-bold text-[#0052CC]">
-                        {printData.exam?.ROOM || selectedRoom === 'ALL' ? 'Ruang 01 / Lab Komputer' : selectedRoom} •{' '}
-                        {printData.exam?.SESSION || selectedSession === 'ALL' ? 'Sesi 1' : selectedSession}
+                        {printData.exam?.ROOM || (selectedRoom === 'ALL' ? 'Ruang 01 / Lab Komputer' : selectedRoom)} •{' '}
+                        {printData.exam?.SESSION || (selectedSession === 'ALL' ? 'Sesi 1' : selectedSession)}
                       </td>
                     </tr>
                   </tbody>
@@ -977,12 +1258,12 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                       <td className="p-2 border-r border-black font-mono">2</td>
                       <td className="p-2 border-r border-black text-left text-emerald-800 font-semibold">Jumlah Peserta Hadir</td>
                       <td className="p-2 border-r border-black font-mono font-bold text-emerald-800">
-                        {beritaAcaraData.jumlahHadir || filteredStudents.length} Siswa
+                        {beritaAcaraData.jumlahHadir} Siswa
                       </td>
                       <td className="p-2 font-mono font-bold text-emerald-800">
                         {filteredStudents.length > 0
-                          ? Math.round(((beritaAcaraData.jumlahHadir || filteredStudents.length) / filteredStudents.length) * 100)
-                          : 100}%
+                          ? Math.round((beritaAcaraData.jumlahHadir / filteredStudents.length) * 100)
+                          : 0}%
                       </td>
                     </tr>
                     <tr>
@@ -1001,10 +1282,45 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
                 </table>
               </div>
 
+              {/* TABEL RINCIAN PER KELAS JIKA SEMUA KELAS DIPILIH */}
+              {selectedClassId === 'ALL' && studentsByClass.length > 1 && (
+                <div className="space-y-2">
+                  <div className="font-bold uppercase text-[11px] text-black">
+                    II. Rincian Jumlah Peserta per Kelas / Rombel:
+                  </div>
+                  <table className="w-full text-xs border border-black border-collapse text-center">
+                    <thead>
+                      <tr className="bg-slate-100 border-b border-black font-bold">
+                        <th className="p-2 border-r border-black w-12">No</th>
+                        <th className="p-2 border-r border-black text-left">Nama Kelas / Rombel</th>
+                        <th className="p-2 border-r border-black w-32">Jumlah Siswa</th>
+                        <th className="p-2 text-left">Keterangan</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-black">
+                      {studentsByClass.map((grp, idx) => (
+                        <tr key={grp.classId}>
+                          <td className="p-2 border-r border-black font-mono">{idx + 1}</td>
+                          <td className="p-2 border-r border-black text-left font-bold text-[#0052CC]">
+                            {grp.className}
+                          </td>
+                          <td className="p-2 border-r border-black font-mono font-bold">
+                            {grp.students.length} Siswa
+                          </td>
+                          <td className="p-2 text-left text-slate-600">
+                            Terdaftar aktif pada jadwal ujian ini
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               {/* CATATAN KHUSUS PELAKSANAAN */}
               <div className="space-y-1">
                 <div className="font-bold uppercase text-[11px] text-black">
-                  II. Catatan Khusus Pelaksanaan Ujian:
+                  {selectedClassId === 'ALL' && studentsByClass.length > 1 ? 'III' : 'II'}. Catatan Khusus Pelaksanaan Ujian:
                 </div>
                 <div className="p-3 border border-black rounded min-h-[50px] bg-slate-50 italic text-[11px] leading-relaxed">
                   {beritaAcaraData.catatanKhusus || 'Ujian berlangsung lancar tanpa kendala teknis berarti.'}
@@ -1072,89 +1388,113 @@ export const CetakDokumenUjian: React.FC<CetakDokumenUjianProps> = ({
           )}
 
           {/* ===================================================================== */}
-          {/* 3. DAFTAR HADIR PESERTA UJIAN                                         */}
+          {/* 3. DAFTAR HADIR PESERTA UJIAN (PER KELAS / ROMBEL)                    */}
           {/* ===================================================================== */}
           {docType === 'attendance' && (
-            <div className="space-y-6 text-black text-xs">
-              {/* KOP DAFTAR HADIR */}
-              <div className="text-center pb-3 border-b-2 border-black space-y-1">
-                <div className="text-[11px] uppercase font-bold text-slate-700">
-                  MAJELIS DIKDASMEN DAN PNF MUHAMMADIYAH CIKARAMAS
+            <div className="space-y-10 text-black text-xs">
+              {filteredStudents.length === 0 ? (
+                <div className="p-8 text-center text-slate-500 bg-slate-50 border border-slate-200 rounded-xl">
+                  Tidak ada data siswa yang cocok dengan filter yang dipilih.
                 </div>
-                <h2 className="text-base sm:text-lg font-black uppercase text-black tracking-tight">
-                  DAFTAR HADIR PESERTA ASESMEN / UJIAN CBT
-                </h2>
-                <div className="text-[11px] font-semibold text-slate-700">
-                  MAS MUHAMMADIYAH CIKARAMAS • TP {schoolSettings.SCHOOL_YEAR || '2026/2027'}
-                </div>
-              </div>
+              ) : (
+                studentsByClass.map((classGroup, groupIdx) => (
+                  <div
+                    key={classGroup.classId}
+                    className={`space-y-6 ${
+                      groupIdx < studentsByClass.length - 1 ? 'break-after-page' : ''
+                    }`}
+                  >
+                    {/* Screen View Indicator */}
+                    {studentsByClass.length > 1 && (
+                      <div className="no-print pb-1 mb-2 border-b border-slate-200 flex items-center justify-between text-xs text-slate-500 font-semibold">
+                        <span className="bg-[#EBF3FF] text-[#0052CC] px-2 py-0.5 rounded font-bold">
+                          Bagian #{groupIdx + 1}: {classGroup.className}
+                        </span>
+                        <span>{classGroup.students.length} Siswa Terdaftar</span>
+                      </div>
+                    )}
 
-              {/* DATA HEADER UJIAN */}
-              <div className="grid grid-cols-2 gap-4 text-xs border border-black p-3 rounded bg-slate-50">
-                <div className="space-y-1">
-                  <div>Mata Pelajaran: <b>{printData.exam?.SUBJECT_NAME || 'Mata Pelajaran'}</b></div>
-                  <div>Judul Ujian: <b>{printData.exam?.TITLE || 'Ujian CBT'}</b></div>
-                  <div>Ruang & Sesi: <b>{printData.exam?.ROOM || 'Ruang 01'} / {printData.exam?.SESSION || 'Sesi 1'}</b></div>
-                </div>
-                <div className="space-y-1">
-                  <div>Kelas / Rombel: <b>{printData.exam?.CLASS_NAME || 'Semua Kelas'}</b></div>
-                  <div>Hari, Tanggal: <b>{printData.exam?.FORMATTED_DATE || new Date().toLocaleDateString('id-ID')}</b></div>
-                  <div>Waktu: <b>{printData.exam?.START_TIME || '07:30'} WIB ({printData.exam?.DURATION_MIN || 90} Menit)</b></div>
-                </div>
-              </div>
-
-              {/* TABEL TANDA TANGAN HADIR ZIG-ZAG */}
-              <table className="w-full text-xs border border-black border-collapse">
-                <thead>
-                  <tr className="bg-slate-100 border-b border-black font-bold text-center">
-                    <th className="p-2 border-r border-black w-10">No</th>
-                    <th className="p-2 border-r border-black w-28 text-left">NISN / NIS</th>
-                    <th className="p-2 border-r border-black text-left">Nama Lengkap Peserta</th>
-                    <th className="p-2 border-r border-black w-20">Kelas</th>
-                    <th className="p-2 text-center w-48">Tanda Tangan Peserta</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-black">
-                  {filteredStudents.map((st, i) => (
-                    <tr key={st.ID} className="break-inside-avoid">
-                      <td className="p-2 border-r border-black text-center font-mono">{i + 1}</td>
-                      <td className="p-2 border-r border-black font-mono font-semibold">{st.USERNAME}</td>
-                      <td className="p-2 border-r border-black font-bold uppercase">{st.NAME}</td>
-                      <td className="p-2 border-r border-black text-center font-medium">
-                        {st.CLASS_ID?.replace('KLS-', '') || 'X'}
-                      </td>
-                      <td className="p-2 text-left font-mono text-[11px]">
-                        {i % 2 === 0 ? `${i + 1}. ..................` : `\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0${i + 1}. ..................`}
-                      </td>
-                    </tr>
-                  ))}
-                  {filteredStudents.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="p-6 text-center text-slate-500">
-                        Tidak ada peserta terdaftar untuk filter ini.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-
-              {/* TANDA TANGAN PENGAWAS DAFTAR HADIR */}
-              <div className="flex justify-end pt-6 break-inside-avoid">
-                <div className="text-center text-xs space-y-16">
-                  <div>
-                    Sumedang, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}<br />
-                    Pengawas Ruang,
-                  </div>
-                  <div>
-                    <div className="font-bold underline text-black">
-                      {beritaAcaraData.pengawas1 || printData.exam?.SUPERVISOR || 'Ai Sukaesih, S.Pd'}
+                    {/* KOP DAFTAR HADIR */}
+                    <div className="text-center pb-3 border-b-2 border-black space-y-1">
+                      <div className="text-[11px] uppercase font-bold text-slate-700">
+                        MAJELIS DIKDASMEN DAN PNF MUHAMMADIYAH CIKARAMAS
+                      </div>
+                      <h2 className="text-base sm:text-lg font-black uppercase text-black tracking-tight">
+                        DAFTAR HADIR PESERTA {assessmentTitle.toUpperCase()}
+                      </h2>
+                      <div className="text-[11px] font-semibold text-slate-700">
+                        MAS MUHAMMADIYAH CIKARAMAS • TP {schoolSettings.SCHOOL_YEAR || '2026/2027'} - {cleanSemesterLabel}
+                      </div>
                     </div>
-                    <div className="font-mono text-[11px]">
-                      {beritaAcaraData.pengawas1Nbm || 'NBM. 1281201'}
+
+                    {/* DATA HEADER UJIAN */}
+                    <div className="grid grid-cols-2 gap-4 text-xs border border-black p-3 rounded bg-slate-50">
+                      <div className="space-y-1">
+                        <div>Mata Pelajaran: <b className="uppercase">{printData.exam?.SUBJECT_NAME || 'Mata Pelajaran'}</b></div>
+                        <div>Jenis Penilaian: <b className="text-[#0052CC]">{assessmentTitle}</b></div>
+                        <div>Ruang & Sesi: <b>{printData.exam?.ROOM || (selectedRoom === 'ALL' ? 'Ruang 01 / Lab Komputer' : selectedRoom)} / {printData.exam?.SESSION || (selectedSession === 'ALL' ? 'Sesi 1' : selectedSession)}</b></div>
+                      </div>
+                      <div className="space-y-1">
+                        <div>Kelas / Rombel: <b className="text-[#0052CC]">{classGroup.className}</b> (Total: <b>{classGroup.students.length} Siswa</b>)</div>
+                        <div>Hari, Tanggal: <b>{printData.exam?.FORMATTED_DATE || new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</b></div>
+                        <div>Waktu & Durasi: <b className="font-mono">{formatExamTimeRange(printData.exam?.START_TIME, printData.exam?.DURATION_MIN)}</b></div>
+                      </div>
+                    </div>
+
+                    {/* TABEL TANDA TANGAN HADIR ZIG-ZAG */}
+                    <table className="w-full text-xs border border-black border-collapse">
+                      <thead>
+                        <tr className="bg-slate-100 border-b border-black font-bold text-center">
+                          <th className="p-2 border-r border-black w-10">No</th>
+                          <th className="p-2 border-r border-black w-28 text-left">NISN / NIS</th>
+                          <th className="p-2 border-r border-black text-left">Nama Lengkap Peserta</th>
+                          <th className="p-2 border-r border-black w-24">Kelas</th>
+                          <th className="p-2 text-center w-48">Tanda Tangan Peserta</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-black">
+                        {classGroup.students.map((st, i) => {
+                          const nisn = st.NISN || st.NIS || st.USERNAME;
+                          return (
+                            <tr key={st.ID} className="break-inside-avoid">
+                              <td className="p-2 border-r border-black text-center font-mono">{i + 1}</td>
+                              <td className="p-2 border-r border-black font-mono font-semibold">{nisn}</td>
+                              <td className="p-2 border-r border-black font-bold uppercase">{st.NAME}</td>
+                              <td className="p-2 border-r border-black text-center font-medium">
+                                {classGroup.className.replace(/^Kelas\s+/i, '')}
+                              </td>
+                              <td className="p-2 text-left font-mono text-[11px]">
+                                {i % 2 === 0 ? `${i + 1}. ..................` : `\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0${i + 1}. ..................`}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+
+                    {/* TANDA TANGAN PENGAWAS DAFTAR HADIR */}
+                    <div className="flex justify-between items-end pt-6 break-inside-avoid" style={{ pageBreakInside: 'avoid' }}>
+                      <div className="text-[11px] text-slate-600">
+                        * Lembar daftar hadir resmi untuk verifikasi kehadiran peserta ujian {classGroup.className}.
+                      </div>
+                      <div className="text-center text-xs space-y-16 shrink-0">
+                        <div>
+                          Sumedang, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}<br />
+                          Pengawas Ruang,
+                        </div>
+                        <div>
+                          <div className="font-bold underline text-black">
+                            {beritaAcaraData.pengawas1 || printData.exam?.SUPERVISOR || 'Ai Sukaesih, S.Pd'}
+                          </div>
+                          <div className="font-mono text-[11px]">
+                            {beritaAcaraData.pengawas1Nbm || 'NBM. 1281201'}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
+                ))
+              )}
             </div>
           )}
         </div>

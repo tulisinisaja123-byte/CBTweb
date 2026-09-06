@@ -1,6 +1,11 @@
 import { QuestionType } from '../types';
 import { ParsedQuestionItem } from '../components/QuestionImportPreview';
-import { normalizeQuestionType, KNOWN_QUESTION_TYPE_NAMES } from './wordParser';
+import {
+  normalizeQuestionType,
+  KNOWN_QUESTION_TYPE_NAMES,
+  parseCombinedOptionsString,
+  extractEmbeddedOptionsFromQuestion
+} from './wordParser';
 import {
   parseMatchingDetails,
   parseMatchingAnswer,
@@ -50,6 +55,10 @@ export function parseExcelQuestionRows(
           if (cleanTarget.length >= 4) {
             for (const [rawKey, rawVal] of rawEntries) {
               const cleanRaw = rawKey.toUpperCase().replace(/[^A-Z0-9]/g, '');
+              // Prevent matching TIPE_SOAL or JENIS_SOAL when looking for SOAL
+              if (cleanTarget === 'SOAL' && (cleanRaw.includes('TIPE') || cleanRaw.includes('JENIS') || cleanRaw.includes('BENTUK') || cleanRaw.includes('KUNCI') || cleanRaw.includes('OPSI'))) {
+                continue;
+              }
               if (cleanRaw.includes(cleanTarget)) {
                 return String(rawVal).trim();
               }
@@ -147,22 +156,90 @@ export function parseExcelQuestionRows(
         }
       }
 
-      const optA = getVal('OPSI_A', 'OPSIA', 'PILIHAN_A', 'PILIHANA', 'OPTION_A', 'OPTIONA', 'A');
-      const optB = getVal('OPSI_B', 'OPSIB', 'PILIHAN_B', 'PILIHANB', 'OPTION_B', 'OPTIONB', 'B');
-      const optC = getVal('OPSI_C', 'OPSIC', 'PILIHAN_C', 'PILIHANC', 'OPTION_C', 'OPTIONC', 'C');
-      const optD = getVal('OPSI_D', 'OPSID', 'PILIHAN_D', 'PILIHAND', 'OPTION_D', 'OPTIOND', 'D');
-      const optE = getVal('OPSI_E', 'OPSIE', 'PILIHAN_E', 'PILIHANE', 'OPTION_E', 'OPTIONE', 'E');
+      // 3. Options Extraction (Supports both separate columns and single combined column)
+      const getOptionVal = (letter: string, num: string) => {
+        return getVal(
+          `OPSI_${letter}`, `OPSI${letter}`, `OPSI_${num}`, `OPSI${num}`,
+          `PILIHAN_${letter}`, `PILIHAN${letter}`, `PILIHAN_${num}`, `PILIHAN${num}`,
+          `OPTION_${letter}`, `OPTION${letter}`, `OPTION_${num}`, `OPTION${num}`,
+          `PIL_${letter}`, `PIL${letter}`, `PIL_${num}`, `PIL${num}`,
+          `JAWABAN_${letter}`, `JAWABAN${letter}`, `JAWABAN_${num}`, `JAWABAN${num}`,
+          `JAWAB_${letter}`, `JAWAB${letter}`,
+          letter
+        );
+      };
 
+      const stripLeadingOpt = (text: string, letter: string) => {
+        if (!text) return '';
+        return text.replace(new RegExp(`^(?:<[^>]+>)*\\s*\\(?${letter}[\\.\\:\\-\\)]\\s*(?:<\\/[^>]+>)*\\s*`, 'i'), '').trim() || text;
+      };
+
+      let optA = stripLeadingOpt(getOptionVal('A', '1'), 'A');
+      let optB = stripLeadingOpt(getOptionVal('B', '2'), 'B');
+      let optC = stripLeadingOpt(getOptionVal('C', '3'), 'C');
+      let optD = stripLeadingOpt(getOptionVal('D', '4'), 'D');
+      let optE = stripLeadingOpt(getOptionVal('E', '5'), 'E');
+
+      // If separate columns are empty, check for a combined option column
+      if (!optA && !optB) {
+        const combinedOptionsRaw = getVal(
+          'OPSI_PILIHAN_A_E', 'OPSIPILIHANAE', 'OPSI_PILIHAN', 'OPSIPILIHAN',
+          'PILIHAN_JAWABAN', 'PILIHANJAWABAN', 'DAFTAR_OPSI', 'DAFTAROPSI',
+          'OPSI', 'PILIHAN', 'OPTIONS', 'PILIHAN_GANDA', 'PILIHANGANDA', 'LIST_OPSI'
+        );
+
+        if (combinedOptionsRaw) {
+          const parsed = parseCombinedOptionsString(combinedOptionsRaw);
+          optA = parsed.A;
+          optB = parsed.B;
+          optC = parsed.C;
+          optD = parsed.D;
+          optE = parsed.E;
+        }
+      }
+
+      // If still empty and question is MCQ, check if options are embedded inside the question text
+      if (!optA && (finalType === 'MCQ' || finalType === 'COMPLEX_MCQ')) {
+        const embedded = extractEmbeddedOptionsFromQuestion(question);
+        if (embedded.options.A && embedded.options.B) {
+          question = embedded.cleanQuestion;
+          optA = embedded.options.A;
+          optB = embedded.options.B;
+          optC = embedded.options.C;
+          optD = embedded.options.D;
+          optE = embedded.options.E;
+        }
+      }
+
+      // If TRUE_FALSE and options are not set, default to Benar / Salah
+      if (finalType === 'TRUE_FALSE' && !optA && !optB) {
+        optA = 'Benar';
+        optB = 'Salah';
+      }
+
+      // 4. Kunci Jawaban (Avoiding false match with JAWABAN_A or JAWABAN_B)
       let answer = getVal(
         'KUNCI_JAWABAN',
         'KUNCIJAWABAN',
-        'KUNCI',
-        'JAWABAN',
-        'ANSWER',
-        'KEY',
         'KUNCI_SOAL',
-        'KUNCISOAL'
+        'KUNCISOAL',
+        'KUNCI',
+        'JAWABAN_BENAR',
+        'JAWABANBENAR',
+        'KUNCI_BENAR',
+        'ANSWER',
+        'KEY'
       );
+      if (!answer) {
+        const hasSpecificAnswerCols = rawEntries.some(([k]) => {
+          const c = k.toUpperCase().replace(/[^A-Z0-9]/g, '');
+          return c === 'JAWABANA' || c === 'JAWABANB';
+        });
+        if (!hasSpecificAnswerCols) {
+          answer = getVal('JAWABAN', 'JAWAB');
+        }
+      }
+
       const rawPoints = getVal('BOBOT_POIN', 'BOBOTPOIN', 'BOBOT', 'POIN', 'POINTS', 'NILAI', 'SKOR');
       const points = parseInt(rawPoints, 10) || 10;
       const examId =

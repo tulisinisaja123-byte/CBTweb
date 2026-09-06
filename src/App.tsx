@@ -75,9 +75,13 @@ export default function App() {
   // Entities & Lookup
   const [lookup, setLookup] = useState<{
     users: User[];
+    allUsers?: User[];
     classes: any[];
+    allClasses?: any[];
     subjects: any[];
+    allSubjects?: any[];
     exams: Exam[];
+    allExams?: Exam[];
     assessmentTypes: AssessmentType[];
   }>({ users: [], classes: [], subjects: [], exams: [], assessmentTypes: [] });
 
@@ -184,6 +188,7 @@ export default function App() {
           subjects: 'SUBJECTS',
           assessmentTypes: 'ASSESSMENT_TYPES',
           exams: 'EXAMS',
+          cbtSchedules: 'EXAMS',
           questions: 'QUESTIONS',
           questionPackages: 'EXAMS',
           participants: 'USERS',
@@ -229,6 +234,7 @@ export default function App() {
     setIsSidebarOpen(false);
 
     // Smooth navigation pacing with microtask frame
+    setEntityRows([]);
     setTimeout(() => {
       setCurrentPage(resolvedPage);
       setTimeout(() => {
@@ -288,6 +294,7 @@ export default function App() {
       subjects: 'SUBJECTS',
       assessmentTypes: 'ASSESSMENT_TYPES',
       exams: 'EXAMS',
+      cbtSchedules: 'EXAMS',
       questions: 'QUESTIONS',
       questionPackages: 'EXAMS',
       participants: 'USERS',
@@ -324,6 +331,7 @@ export default function App() {
       subjects: 'SUBJECTS',
       assessmentTypes: 'ASSESSMENT_TYPES',
       exams: 'EXAMS',
+      cbtSchedules: 'EXAMS',
       questions: 'QUESTIONS'
     };
     const ent = entityType || payload?._entityType || entityMap[currentPage];
@@ -332,7 +340,7 @@ export default function App() {
     if (payload && payload !== '_REFRESH_ONLY') {
       await saveEntity(token, ent, payload);
     }
-    const updatedRows = await listEntity(token, entityMap[currentPage]);
+    const updatedRows = await listEntity(token, entityMap[currentPage] || ent);
     setEntityRows(updatedRows);
     await refreshLookup(token);
   };
@@ -346,6 +354,7 @@ export default function App() {
       subjects: 'SUBJECTS',
       assessmentTypes: 'ASSESSMENT_TYPES',
       exams: 'EXAMS',
+      cbtSchedules: 'EXAMS',
       questions: 'QUESTIONS'
     };
     const ent = entityType || entityMap[currentPage];
@@ -356,7 +365,7 @@ export default function App() {
     } else {
       await deleteEntity(token, ent, id);
     }
-    const updatedRows = await listEntity(token, entityMap[currentPage]);
+    const updatedRows = await listEntity(token, entityMap[currentPage] || ent);
     setEntityRows(updatedRows);
     await refreshLookup(token);
   };
@@ -537,6 +546,7 @@ export default function App() {
                       dashboard={dashboard}
                       classNameHelper={classNameHelper}
                       onNavigate={handleNavigate}
+                      onStartExam={handleStartExam}
                       onRefresh={() => {
                         if (token) {
                           restoreSession(token)
@@ -655,17 +665,28 @@ export default function App() {
           {(currentPage === 'exams' || currentPage === 'cbtSchedules') && (
             <CbtExamScheduleManager
               token={token}
-              exams={lookup.exams}
-              classes={lookup.classes}
-              subjects={lookup.subjects}
+              exams={
+                (currentPage === 'exams' || currentPage === 'cbtSchedules') && Array.isArray(entityRows) && entityRows.length > 0 && (entityRows[0]?.EXAM_DATE !== undefined || entityRows[0]?.SUBJECT_ID !== undefined)
+                  ? entityRows
+                  : (lookup.allExams && lookup.allExams.length > 0 ? lookup.allExams : (lookup.exams || []))
+              }
+              classes={lookup.allClasses && lookup.allClasses.length > 0 ? lookup.allClasses : (lookup.classes || [])}
+              subjects={lookup.allSubjects && lookup.allSubjects.length > 0 ? lookup.allSubjects : (lookup.subjects || [])}
               assessmentTypes={lookup.assessmentTypes}
-              users={lookup.users}
+              users={lookup.allUsers && lookup.allUsers.length > 0 ? lookup.allUsers : (lookup.users || [])}
               currentUser={user}
               onNavigateToPrint={() => handleNavigate('printCards')}
               onNavigateToQuestions={() => handleNavigate('questions')}
-              onRefreshData={() => {
-                refreshLookup(token);
-                listEntity(token, 'EXAMS').then(rows => setEntityRows(rows));
+              onDelete={async (id: string | string[]) => {
+                await handleDeleteEntity(id, 'EXAMS');
+              }}
+              onSave={async (examData: any) => {
+                await handleSaveEntity(examData, 'EXAMS');
+              }}
+              onRefreshData={async () => {
+                await refreshLookup(token);
+                const rows = await listEntity(token, 'EXAMS');
+                setEntityRows(rows);
               }}
             />
           )}
@@ -741,6 +762,14 @@ export default function App() {
               classes={lookup.classes}
               currentUser={user}
               isStudentOnly={false}
+              token={token}
+              onRefresh={async () => {
+                if (token) {
+                  const rows = await listEntity(token, 'ATTEMPTS');
+                  setEntityRows(rows);
+                  await refreshLookup(token);
+                }
+              }}
             />
           )}
 
@@ -749,24 +778,42 @@ export default function App() {
           {currentPage === 'printCards' && (
             <PrintDocumentsView
               token={token}
-              exams={lookup.exams}
+              exams={lookup.allExams && lookup.allExams.length > 0 ? lookup.allExams : lookup.exams}
+              users={lookup.allUsers && lookup.allUsers.length > 0 ? lookup.allUsers : lookup.users}
+              classes={lookup.allClasses && lookup.allClasses.length > 0 ? lookup.allClasses : lookup.classes}
+              subjects={lookup.allSubjects && lookup.allSubjects.length > 0 ? lookup.allSubjects : lookup.subjects}
+              assessmentTypes={lookup.assessmentTypes}
+              settings={settings}
               defaultDocType="cards"
+              currentUser={user}
             />
           )}
 
           {currentPage === 'printAttendance' && (
             <PrintDocumentsView
               token={token}
-              exams={lookup.exams}
+              exams={lookup.allExams && lookup.allExams.length > 0 ? lookup.allExams : lookup.exams}
+              users={lookup.allUsers && lookup.allUsers.length > 0 ? lookup.allUsers : lookup.users}
+              classes={lookup.allClasses && lookup.allClasses.length > 0 ? lookup.allClasses : lookup.classes}
+              subjects={lookup.allSubjects && lookup.allSubjects.length > 0 ? lookup.allSubjects : lookup.subjects}
+              assessmentTypes={lookup.assessmentTypes}
+              settings={settings}
               defaultDocType="attendance"
+              currentUser={user}
             />
           )}
 
           {currentPage === 'printMinutes' && (
             <PrintDocumentsView
               token={token}
-              exams={lookup.exams}
+              exams={lookup.allExams && lookup.allExams.length > 0 ? lookup.allExams : lookup.exams}
+              users={lookup.allUsers && lookup.allUsers.length > 0 ? lookup.allUsers : lookup.users}
+              classes={lookup.allClasses && lookup.allClasses.length > 0 ? lookup.allClasses : lookup.classes}
+              subjects={lookup.allSubjects && lookup.allSubjects.length > 0 ? lookup.allSubjects : lookup.subjects}
+              assessmentTypes={lookup.assessmentTypes}
+              settings={settings}
               defaultDocType="minutes"
+              currentUser={user}
             />
           )}
 
@@ -833,6 +880,7 @@ export default function App() {
           {(currentPage === 'availableExams' || currentPage === 'examRoom') && (
             <StudentExamsView
               token={token}
+              currentUser={user}
               onStartExam={handleStartExam}
             />
           )}

@@ -1,6 +1,6 @@
 {
-  "name": "Remix terkhir disini CBT MAS MUHAMMADIYAH CIKARAMAS v1",
-  "description": "Sistem Manajemen Pembelajaran dan Ujian Sekolah dengan CBT Lockdown, Bank Soal, Live Monitoring, dan Cetak Dokumen Otomatis.",
+  "name": "CBTweb v8",
+  "description": "Aplikasi ini masih dalam tahap pengembangan",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

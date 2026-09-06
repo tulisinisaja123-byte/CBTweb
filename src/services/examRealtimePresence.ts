@@ -43,6 +43,7 @@ export interface StudentPresenceInitParams {
   maxViolations?: number;
   onTeacherAlert?: (message: string, teacherName?: string) => void;
   onForceUnlock?: () => void;
+  onResetAttempt?: () => void;
 }
 
 export interface StudentExamPresenceController {
@@ -141,6 +142,20 @@ export function initStudentExamPresence(
         }
       });
 
+      channel.on('broadcast', { event: 'reset_student_attempt' }, (eventPayload: any) => {
+        const p = eventPayload?.payload;
+        if (p?.targetAttemptId === params.attemptId) {
+          currentPresence.isLockedOut = false;
+          currentPresence.violations = 0;
+          if (params.onResetAttempt) {
+            params.onResetAttempt();
+          } else if (params.onForceUnlock) {
+            params.onForceUnlock();
+          }
+          channel.track({ ...currentPresence, lastPing: Date.now() });
+        }
+      });
+
       // Join channel & register presence
       channel.subscribe(async (status: string) => {
         if (status === 'SUBSCRIBED' && !isDestroyed) {
@@ -177,6 +192,17 @@ export function initStudentExamPresence(
         currentPresence.isLockedOut = false;
         currentPresence.violations = Math.max(0, currentPresence.violations - 1);
         if (params.onForceUnlock) {
+          params.onForceUnlock();
+        }
+      }
+    } else if (data.type === 'reset_student_attempt') {
+      const p = data.payload;
+      if (p?.targetAttemptId === params.attemptId) {
+        currentPresence.isLockedOut = false;
+        currentPresence.violations = 0;
+        if (params.onResetAttempt) {
+          params.onResetAttempt();
+        } else if (params.onForceUnlock) {
           params.onForceUnlock();
         }
       }
@@ -369,6 +395,7 @@ export interface MonitoringCallbacks {
 export interface ExamMonitoringSupervisorController {
   sendTeacherAlert: (targetAttemptId: string | 'ALL', message: string, teacherName: string) => Promise<void>;
   unlockStudentLockdown: (targetAttemptId: string) => Promise<void>;
+  resetStudentAttempt: (targetAttemptId: string) => Promise<void>;
   getPresences: () => Record<string, StudentPresencePayload>;
   destroy: () => void;
 }
@@ -610,6 +637,43 @@ export function subscribeToExamMonitoring(
           });
         } catch (e) {
           console.warn('Gagal broadcast buka kunci lockdown:', e);
+        }
+      }
+    },
+
+    resetStudentAttempt: async (targetAttemptId: string) => {
+      const payload = { targetAttemptId, timestamp: Date.now() };
+
+      if (currentPresences[targetAttemptId]) {
+        currentPresences[targetAttemptId].isLockedOut = false;
+        currentPresences[targetAttemptId].violations = 0;
+        notifyPresence();
+      }
+
+      // Local broadcast
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('cbt:exam_realtime', {
+            detail: { type: 'reset_student_attempt', payload }
+          })
+        );
+      }
+      if (localBroadcastInstance) {
+        try {
+          localBroadcastInstance.postMessage({ type: 'reset_student_attempt', payload });
+        } catch {}
+      }
+
+      // Supabase Realtime broadcast
+      if (channel) {
+        try {
+          await channel.send({
+            type: 'broadcast',
+            event: 'reset_student_attempt',
+            payload
+          });
+        } catch (e) {
+          console.warn('Gagal broadcast reset ujian:', e);
         }
       }
     },

@@ -152,8 +152,24 @@ const ALL_STEPS: WorkflowStep[] = [
     badge: 'Pengaturan Sesi'
   },
   {
-    id: 'step-print-documents',
+    id: 'step-cbt-attendance',
     stepNumber: 7,
+    role: 'ALL',
+    roleLabel: 'Guru & Pengawas & Siswa',
+    category: 'EXAM',
+    title: 'Presensi Kehadiran di Sekolah & Scan QR Barcode Harian',
+    shortDesc: 'Pengawas memproyeksikan QR harian dan siswa memindai barcode/memasukkan kode untuk memvalidasi kehadiran fisik.',
+    fullDesc: 'Demi integritas pelaksanaan ujian madrasah, siswa yang hadir di sekolah wajib melakukan verifikasi presensi fisik harian. Pengawas ruang dapat menayangkan QR code dinamis harian di proyektor atau mengonfirmasi kehadiran siswa secara manual. Siswa yang tidak hadir di sekolah otomatis dialihkan ke Jadwal Ujian Susulan atau memerlukan dispensasi khusus dari pihak madrasah jika diizinkan mengerjakan daring.',
+    inputs: ['Kode 6-Karakter Presensi Harian Pengawas', 'Kamera scanner perangkat siswa atau verifikasi manual'],
+    outputs: ['Status Hadir di Sekolah Terverifikasi', 'Izin akses pembukaan butir soal ujian dibuka'],
+    targetPage: 'cbtSchedules',
+    targetButtonLabel: 'Buka Jadwal & Presensi CBT',
+    tips: 'Pengawas dapat menggunakan tombol "Tandai Hadir Semua Siswa" di panel Live Monitoring / Jadwal Ujian untuk mempercepat presensi satu ruangan sekaligus.',
+    badge: 'Integritas Ujian'
+  },
+  {
+    id: 'step-print-documents',
+    stepNumber: 8,
     role: 'ADMIN',
     roleLabel: 'Administrator / Panitia',
     category: 'DOCS',
@@ -170,31 +186,31 @@ const ALL_STEPS: WorkflowStep[] = [
   // 4. EXAM EXECUTION & MONITORING
   {
     id: 'step-student-taking',
-    stepNumber: 8,
+    stepNumber: 9,
     role: 'STUDENT',
     roleLabel: 'Siswa Peserta',
     category: 'EXAM',
     title: 'Pelaksanaan Ujian Siswa (Mode CBT Lockdown Anti-Curang)',
-    shortDesc: 'Siswa login dengan akun kartu ujian, memilih jadwal aktif, dan mengerjakan dengan timer terproteksi.',
-    fullDesc: 'Antarmuka pengerjaan ujian ramah gawai (HP, Tablet, Laptop) dengan proteksi anti-curang. Fitur: Timer hitung mundur, navigasi nomor cepat, tanda ragu-ragu kuning, auto-save jawaban instan, dan pencatatan pelanggaran jika berpindah tab browser.',
-    inputs: ['Username / NIS & Password dari Kartu Peserta', 'Perangkat browser (Chrome/Edge/Safari/Mobile)'],
+    shortDesc: 'Siswa login dengan akun kartu ujian, scan QR presensi, memilih jadwal aktif, dan mengerjakan dengan timer.',
+    fullDesc: 'Antarmuka pengerjaan ujian ramah gawai (HP, Tablet, Laptop) dengan proteksi anti-curang. Fitur: Timer hitung mundur, token ujian dari pengawas, navigasi nomor cepat, tanda ragu-ragu kuning, auto-save jawaban instan, dan pencatatan pelanggaran jika berpindah tab browser.',
+    inputs: ['Username / NIS & Password dari Kartu Peserta', 'Token ujian dari pengawas ruang', 'Perangkat browser (Chrome/Edge/Safari/Mobile)'],
     outputs: ['Jawaban siswa tersimpan otomatis', 'Status pengerjaan selesai'],
     targetPage: 'availableExams',
-    targetButtonLabel: 'Buka Daftar Ujian Siswa',
+    targetButtonLabel: 'Buka Jadwal Ujian Siswa',
     tips: 'Gunakan tombol "Tandai Ragu-Ragu" untuk soal yang belum pasti agar mudah ditemukan kembali melalui nomor peta soal sebelum waktu habis.',
     badge: 'Ujian Realtime'
   },
   {
     id: 'step-live-monitoring',
-    stepNumber: 9,
-    role: 'ADMIN',
+    stepNumber: 10,
+    role: 'TEACHER',
     roleLabel: 'Panitia & Pengawas',
     category: 'EXAM',
-    title: 'Live Monitoring Pengawas & Kendali Gangguan Teknis',
-    shortDesc: 'Pantau status pengerjaan seluruh peserta secara langsung, sisa waktu, dan deteksi kecurangan.',
-    fullDesc: 'Pengawas ruang dan panitia dapat memantau ruang ujian secara realtime: siapa saja yang sedang aktif mengerjakan, sisa waktu, indikator pelanggaran pindah jendela, serta tombol darurat "Reset Login" jika siswa mengalami baterai habis atau browser tertutup.',
-    inputs: ['Sesi ujian yang sedang berjalan'],
-    outputs: ['Rekap aktivitas peserta real-time', 'Penanganan kendala teknis tanpa kehilangan jawaban'],
+    title: 'Live Monitoring Pengawas & Penanganan Siswa Susulan',
+    shortDesc: 'Pantau status pengerjaan seluruh peserta secara langsung, reset login aman, dan penanganan siswa berhalangan hadir.',
+    fullDesc: 'Pengawas ruang dan panitia dapat memantau ruang ujian secara realtime: siapa saja yang sedang aktif mengerjakan, sisa waktu, indikator pelanggaran pindah jendela, tombol "Buka Kunci", serta "Reset Sesi" tanpa kehilangan jawaban. Siswa yang sakit/tidak hadir dapat ditandai untuk masuk ke Jadwal Ujian Susulan atau diberikan izin daring khusus.',
+    inputs: ['Sesi ujian yang sedang berjalan', 'Daftar kehadiran siswa di ruang ujian'],
+    outputs: ['Rekap aktivitas peserta real-time', 'Penanganan kendala teknis tanpa kehilangan jawaban', 'Status pengerjaan susulan terdata'],
     targetPage: 'monitoring',
     targetButtonLabel: 'Buka Live Monitoring',
     tips: 'Jika siswa tidak sengaja menutup browser, pengawas cukup melakukan Reset Status pada Live Monitoring agar siswa dapat melanjutkan dari sisa waktu sebelumnya.',
@@ -203,7 +219,7 @@ const ALL_STEPS: WorkflowStep[] = [
   // 5. EVALUATION & SCORING
   {
     id: 'step-essay-grading',
-    stepNumber: 10,
+    stepNumber: 11,
     role: 'TEACHER',
     roleLabel: 'Guru Pengampu',
     category: 'GRADING',
@@ -219,9 +235,9 @@ const ALL_STEPS: WorkflowStep[] = [
   },
   {
     id: 'step-results-export',
-    stepNumber: 11,
-    role: 'ADMIN',
-    roleLabel: 'Admin & Guru',
+    stepNumber: 12,
+    role: 'TEACHER',
+    roleLabel: 'Guru & Admin',
     category: 'GRADING',
     title: 'Rekapitulasi Hasil Ujian, Analisis Butir, & Ekspor Nilai',
     shortDesc: 'Tinjau ledger nilai per rombel/mapel, persentase ketuntasan KKM, dan unduh laporan nilai dalam Excel.',
@@ -235,18 +251,207 @@ const ALL_STEPS: WorkflowStep[] = [
   }
 ];
 
+const STUDENT_STEPS: WorkflowStep[] = [
+  {
+    id: 'student-step-1',
+    stepNumber: 1,
+    role: 'STUDENT',
+    roleLabel: 'Siswa Peserta',
+    category: 'SCHEDULE',
+    title: 'Cek Jadwal, Waktu Sesi, & Ruang Ujian',
+    shortDesc: 'Periksa jadwal ujian aktif untuk rombel kelas Anda, jam mulai WIB, alokasi durasi menit, dan ruang ujian.',
+    fullDesc: 'Pastikan Anda mengetahui jadwal mata pelajaran yang diujikan hari ini. Anda dapat memeriksa waktu mulai, durasi ujian, serta ruang pelaksanaan pada kartu peserta atau menu Jadwal Ujian.',
+    inputs: ['Kartu Peserta Ujian / Jadwal Kelas', 'Gawai / Perangkat pengerjaan (HP/Laptop)'],
+    outputs: ['Kesiapan mengikuti sesi ujian tepat waktu'],
+    targetPage: 'availableExams',
+    targetButtonLabel: 'Lihat Jadwal Ujian',
+    tips: 'Hadir minimal 15 menit sebelum jam mulai ujian agar tidak tergesa-gesa saat persiapan.',
+    badge: 'Langkah 1'
+  },
+  {
+    id: 'student-step-2',
+    stepNumber: 2,
+    role: 'STUDENT',
+    roleLabel: 'Siswa Peserta',
+    category: 'EXAM',
+    title: 'Presensi Fisik di Sekolah (Scan Barcode / Verifikasi Pengawas)',
+    shortDesc: 'Wajib verifikasi kehadiran fisik di madrasah. Siswa yang berhalangan hadir otomatis dialihkan ke jadwal susulan.',
+    fullDesc: 'Demi integritas pelaksanaan asesmen madrasah, sistem mendeteksi kehadiran siswa di lingkungan sekolah. Siswa memindai Barcode/QR harian yang ditayangkan proyektor/papan pengawas atau meminta pengawas ruang memverifikasi kehadiran. Siswa yang tidak hadir di sekolah otomatis dialihkan ke Jadwal Ujian Susulan.',
+    inputs: ['Barcode Presensi Harian dari Pengawas', 'Kamera / Form input kode 6-karakter'],
+    outputs: ['Status Hadir di Madrasah Terverifikasi', 'Tombol Mulai Ujian Terbuka'],
+    targetPage: 'availableExams',
+    targetButtonLabel: 'Buka Scanner Barcode',
+    tips: 'Jika barcode sulit dipindai kamera, Anda dapat mengetik 6 karakter kode presensi yang tertulis di bawah barcode.',
+    badge: 'Integritas Wajib'
+  },
+  {
+    id: 'student-step-3',
+    stepNumber: 3,
+    role: 'STUDENT',
+    roleLabel: 'Siswa Peserta',
+    category: 'EXAM',
+    title: 'Masuk Ruang Ujian & Masukkan Token Soal Pengawas',
+    shortDesc: 'Klik tombol "Mulai Kerjakan Ujian" dan masukkan token 6 huruf yang diumumkan pengawas ruang.',
+    fullDesc: 'Setelah kehadiran di madrasah diverifikasi dan jam mulai tiba, klik "Mulai Kerjakan Ujian". Jika ujian menggunakan pengamanan token, mintalah token rilis kepada pengawas ruang dan masukkan pada kotak dialog konfirmasi.',
+    inputs: ['Token Ujian 6 Huruf dari Pengawas Ruang'],
+    outputs: ['Akses lembar naskah soal terbuka'],
+    targetPage: 'availableExams',
+    targetButtonLabel: 'Masuk Ruang Ujian',
+    tips: 'Token ujian hanya dirilis oleh pengawas ketika seluruh peserta telah tertib di ruang ujian.',
+    badge: 'Akses Soal'
+  },
+  {
+    id: 'student-step-4',
+    stepNumber: 4,
+    role: 'STUDENT',
+    roleLabel: 'Siswa Peserta',
+    category: 'EXAM',
+    title: 'Pengerjaan Soal CBT Lockdown (Anti-Curang, Timer, Navigasi)',
+    shortDesc: 'Jawab soal dengan tenang. Jawaban tersimpan otomatis. Dilarang berpindah aplikasi atau tab browser.',
+    fullDesc: 'Kerjakan soal sesuai durasi hitung mundur. Sistem mendukung 6 tipe soal (Pilihan Ganda, PG Kompleks, Benar/Salah, Menjodohkan, Isian Singkat, Uraian). Gunakan tombol Ragu-Ragu kuning jika belum yakin. Jangan keluar dari jendela ujian atau membuka aplikasi lain agar tidak terkena peringatan pelanggaran/kunci layar.',
+    inputs: ['Navigasi butir soal', 'Timer hitung mundur'],
+    outputs: ['Jawaban tersimpan otomatis di server'],
+    targetPage: 'availableExams',
+    targetButtonLabel: 'Pengerjaan CBT',
+    tips: 'Jika perangkat Anda mati mendadak atau browser tertutup, segera lapor ke pengawas ruang untuk Reset Sesi tanpa kehilangan jawaban yang telah tersimpan.',
+    badge: 'Pengerjaan'
+  },
+  {
+    id: 'student-step-5',
+    stepNumber: 5,
+    role: 'STUDENT',
+    roleLabel: 'Siswa Peserta',
+    category: 'GRADING',
+    title: 'Konfirmasi Selesai & Periksa Perolehan Nilai',
+    shortDesc: 'Periksa kembali seluruh nomor soal pada peta navigasi, lalu klik Selesai Ujian untuk melihat perolehan skor.',
+    fullDesc: 'Sebelum mengakhiri ujian, pastikan tidak ada nomor soal yang berwarna kuning (ragu-ragu) atau abu-abu (belum dijawab). Setelah klik Selesai dan mengonfirmasi penyerahan lembar jawaban, Anda dapat melihat rekapitulasi nilai dan status kelulusan KKM pada menu Nilai Saya.',
+    inputs: ['Konfirmasi penyerahan lembar jawaban'],
+    outputs: ['Skor ujian objektif keluar seketika', 'Status pengerjaan selesai'],
+    targetPage: 'myResults',
+    targetButtonLabel: 'Buka Nilai Saya',
+    tips: 'Untuk soal uraian/esai, nilai akhir akan terakumulasi setelah guru mata pelajaran selesai mengoreksi.',
+    badge: 'Hasil Akhir'
+  }
+];
+
+const TEACHER_STEPS: WorkflowStep[] = [
+  {
+    id: 'teacher-step-1',
+    stepNumber: 1,
+    role: 'TEACHER',
+    roleLabel: 'Guru Pengampu',
+    category: 'CONTENT',
+    title: 'Pembuatan & Import Paket Bank Soal (6 Tipe Soal / Word .docx)',
+    shortDesc: 'Susun butir soal CBT secara fleksibel atau import instan langsung dari file Microsoft Word (.docx) & Excel (.xlsx).',
+    fullDesc: 'Guru menyusun naskah soal ujian sesuai kurikulum madrasah. Sistem mendukung 6 variasi tipe soal: 1) Pilihan Ganda Biasa, 2) Pilihan Ganda Kompleks (multi jawaban), 3) Benar / Salah, 4) Menjodohkan, 5) Isian Singkat, dan 6) Uraian / Esai. Anda juga dapat mengetik di template Word resmi lalu mengklik tombol Import Word untuk memasukkan puluhan soal dalam hitungan detik.',
+    inputs: ['File naskah soal Word (.docx) / Excel (.xlsx)', 'Kunci jawaban & rubrik penskoran'],
+    outputs: ['Paket Bank Soal CBT digital siap diujikan'],
+    targetPage: 'questions',
+    targetButtonLabel: 'Kelola Bank Soal',
+    tips: 'Gunakan tombol "Unduh Template Soal Word" di halaman Bank Soal sebagai acuan format penulisan naskah yang rapi.',
+    badge: 'Bank Soal'
+  },
+  {
+    id: 'teacher-step-2',
+    stepNumber: 2,
+    role: 'TEACHER',
+    roleLabel: 'Guru Pengampu',
+    category: 'SCHEDULE',
+    title: 'Pengaturan Jadwal Ujian & Target Rombel Serentak (Multi-Kelas)',
+    shortDesc: 'Atur jadwal asesmen, pilih lebih dari 1 kelas sasaran sekaligus, tentukan jenis penilaian fleksibel, dan preset sesi.',
+    fullDesc: 'Buat jadwal ujian untuk mata pelajaran yang Anda ampu. Anda dapat memilih beberapa rombel kelas sekaligus (misal seluruh kelas 10) dalam satu kali simpan, dan jadwal otomatis terdistribusi ke masing-masing kelas. Tentukan nama jenis penilaian (pilihan baku atau tulis nama manual kustom) serta pilih template sesi waktu yang fleksibel.',
+    inputs: ['Mata pelajaran diampu', 'Target rombel kelas', 'Tanggal, jam mulai, durasi menit, dan ruang'],
+    outputs: ['Jadwal CBT aktif di kelas masing-masing'],
+    targetPage: 'cbtSchedules',
+    targetButtonLabel: 'Buka Pengaturan Jadwal',
+    tips: 'Pilih opsi "Tulis Manual" pada Jenis Penilaian jika Anda ingin memberi nama khusus seperti "Try Out UTBK 1" atau "Kuis Harian Bab 3".',
+    badge: 'Multi-Kelas'
+  },
+  {
+    id: 'teacher-step-3',
+    stepNumber: 3,
+    role: 'TEACHER',
+    roleLabel: 'Guru & Pengawas',
+    category: 'EXAM',
+    title: 'Barcode Presensi Harian Sekolah & Hadirkan Siswa',
+    shortDesc: 'Tayangkan barcode dinamis harian di proyektor atau tandai hadir siswa secara manual demi integritas ujian.',
+    fullDesc: 'Setiap hari pelaksanaan ujian memiliki kode & QR presensi unik. Buka modal "Presensi & Barcode Sekolah" untuk menayangkan QR di proyektor atau mencetaknya. Siswa memindai QR untuk memvalidasi bahwa mereka benar-benar berada di sekolah. Pengawas juga dapat menandai hadir siswa secara manual atau satu rombel sekaligus.',
+    inputs: ['Barcode Presensi Harian', 'Daftar kehadiran siswa di ruang ujian'],
+    outputs: ['Siswa terverifikasi hadir di madrasah', 'Siswa yang tidak hadir dialihkan ke Jadwal Ujian Susulan'],
+    targetPage: 'cbtSchedules',
+    targetButtonLabel: 'Buka Presensi Sekolah',
+    tips: 'Gunakan tombol "Tandai Hadir Semua Siswa" untuk memverifikasi satu ruangan dengan satu kali klik saat absensi kelas telah tuntas.',
+    badge: 'Integritas Ujian'
+  },
+  {
+    id: 'teacher-step-4',
+    stepNumber: 4,
+    role: 'TEACHER',
+    roleLabel: 'Guru & Pengawas',
+    category: 'EXAM',
+    title: 'Live Monitoring Pengawasan Ruang (Reset Sesi & Buka Kunci)',
+    shortDesc: 'Pantau kemajuan pengerjaan siswa secara realtime, atasi kendala teknis perangkat, dan reset sesi tanpa kehilangan jawaban.',
+    fullDesc: 'Melalui halaman Live Monitoring, pengawas dapat melihat nama peserta yang sedang aktif mengerjakan, sisa waktu pengerjaan, persentase progress soal, indikator fokus layar, dan jumlah pelanggaran pindah tab. Jika siswa mengalami masalah gawai, pengawas dapat mengklik "Reset Sesi" agar siswa dapat melanjutkan dari sisa waktu sebelumnya dengan seluruh jawaban yang telah tersimpan utuh.',
+    inputs: ['Sesi ujian yang sedang berlangsung'],
+    outputs: ['Pengawasan tertib dan penanganan kendala cepat tanpa kepanikan siswa'],
+    targetPage: 'monitoring',
+    targetButtonLabel: 'Buka Live Monitoring',
+    tips: 'Fitur "Buka Kunci Layar" digunakan jika siswa terkunci otomatis akibat melebihi batas toleransi keluar layar.',
+    badge: 'Pengawasan'
+  },
+  {
+    id: 'teacher-step-5',
+    stepNumber: 5,
+    role: 'TEACHER',
+    roleLabel: 'Guru Pengampu',
+    category: 'GRADING',
+    title: 'Koreksi Soal Uraian / Esai Siswa',
+    shortDesc: 'Tinjau jawaban esai siswa dengan panduan rubrik kunci jawaban, berikan skor 0-100 dan catatan apresiasi.',
+    fullDesc: 'Soal tipe objektif (pilihan ganda, PG kompleks, benar/salah, menjodohkan, isian singkat) dikoreksi otomatis seketika. Untuk soal uraian/esai, guru membuka menu Koreksi Uraian untuk menilai jawaban siswa berdasarkan pedoman penskoran yang telah ditentukan. Nilai akhir siswa langsung terakumulasi secara otomatis.',
+    inputs: ['Jawaban uraian siswa', 'Rubrik kunci jawaban guru'],
+    outputs: ['Nilai esai tervalidasi 100%'],
+    targetPage: 'reviews',
+    targetButtonLabel: 'Koreksi Soal Uraian',
+    tips: 'Gunakan kolom "Catatan Guru" untuk memberikan umpan balik konstruktif kepada siswa atas jawabannya.',
+    badge: 'Koreksi'
+  },
+  {
+    id: 'teacher-step-6',
+    stepNumber: 6,
+    role: 'TEACHER',
+    roleLabel: 'Guru Pengampu',
+    category: 'GRADING',
+    title: 'Rekapitulasi Ledger Nilai & Ekspor Excel',
+    shortDesc: 'Tinjau ledger nilai per rombel kelas, analisis ketuntasan KKM, dan unduh laporan nilai dalam format spreadsheet Excel.',
+    fullDesc: 'Setelah seluruh pengerjaan dan koreksi selesai, guru dapat melihat ledger nilai lengkap yang menampilkan nilai per butir, persentase ketuntasan KKM, nilai tertinggi, dan nilai rata-rata kelas. Klik tombol "Export Excel" untuk mengunduh laporan nilai siap cetak untuk pengisian e-Rapor.',
+    inputs: ['Data hasil ujian siswa per kelas'],
+    outputs: ['Laporan Nilai Excel resmi siap arsip dan input rapor'],
+    targetPage: 'results',
+    targetButtonLabel: 'Buka Hasil & Rekap Nilai',
+    tips: 'Pilih filter kelas dan mata pelajaran sebelum mengklik "Export Excel" agar file laporan terbagi rapi per rombel.',
+    badge: 'Rekap Nilai'
+  }
+];
+
 export const WorkflowGuideView: React.FC<WorkflowGuideViewProps> = ({ user, onNavigate }) => {
-  const [selectedRoleFilter, setSelectedRoleFilter] = useState<'ALL' | 'ADMIN' | 'TEACHER' | 'STUDENT'>('ALL');
+  const isStudent = user.ROLE === 'STUDENT';
+  const isTeacher = user.ROLE === 'TEACHER';
+  const isAdmin = user.ROLE === 'ADMIN';
+
+  // Choose base steps list based on active user role
+  const baseSteps = isStudent ? STUDENT_STEPS : isTeacher ? TEACHER_STEPS : ALL_STEPS;
+  const defaultRole = isStudent ? 'STUDENT' : isTeacher ? 'TEACHER' : 'ALL';
+  const [selectedRoleFilter, setSelectedRoleFilter] = useState<'ALL' | 'ADMIN' | 'TEACHER' | 'STUDENT'>(defaultRole);
   const [searchQuery, setSearchQuery] = useState('');
   const [completedStepIds, setCompletedStepIds] = useState<string[]>(() => {
     try {
-      const saved = localStorage.getItem('cbt_workflow_checklist');
+      const saved = localStorage.getItem(`cbt_workflow_${user.ROLE.toLowerCase()}`);
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
     }
   });
-  const [expandedStepId, setExpandedStepId] = useState<string | null>('step-settings');
+  const [expandedStepId, setExpandedStepId] = useState<string | null>(baseSteps[0]?.id || null);
   const [isPrintSummaryModalOpen, setIsPrintSummaryModalOpen] = useState(false);
 
   // Synchronize completed checklist to local storage
@@ -255,7 +460,7 @@ export const WorkflowGuideView: React.FC<WorkflowGuideViewProps> = ({ user, onNa
       const exists = prev.includes(stepId);
       const updated = exists ? prev.filter(id => id !== stepId) : [...prev, stepId];
       try {
-        localStorage.setItem('cbt_workflow_checklist', JSON.stringify(updated));
+        localStorage.setItem(`cbt_workflow_${user.ROLE.toLowerCase()}`, JSON.stringify(updated));
       } catch {
         // ignore
       }
@@ -267,7 +472,7 @@ export const WorkflowGuideView: React.FC<WorkflowGuideViewProps> = ({ user, onNa
     if (window.confirm('Reset seluruh tanda centang kemajuan pengerjaan?')) {
       setCompletedStepIds([]);
       try {
-        localStorage.removeItem('cbt_workflow_checklist');
+        localStorage.removeItem(`cbt_workflow_${user.ROLE.toLowerCase()}`);
       } catch {
         // ignore
       }
@@ -275,13 +480,17 @@ export const WorkflowGuideView: React.FC<WorkflowGuideViewProps> = ({ user, onNa
   };
 
   // Filter steps according to role and search term
-  const filteredSteps = ALL_STEPS.filter(step => {
-    const matchesRole =
-      selectedRoleFilter === 'ALL' ||
-      step.role === selectedRoleFilter ||
-      (selectedRoleFilter === 'ADMIN' && (step.role === 'ADMIN' || step.role === 'ALL')) ||
-      (selectedRoleFilter === 'TEACHER' && (step.role === 'TEACHER' || step.role === 'ALL')) ||
-      (selectedRoleFilter === 'STUDENT' && (step.role === 'STUDENT' || step.role === 'ALL'));
+  const activeStepList = isStudent ? STUDENT_STEPS : isTeacher ? TEACHER_STEPS : ALL_STEPS;
+  const filteredSteps = activeStepList.filter(step => {
+    if (isAdmin) {
+      const matchesRole =
+        selectedRoleFilter === 'ALL' ||
+        step.role === selectedRoleFilter ||
+        (selectedRoleFilter === 'ADMIN' && (step.role === 'ADMIN' || step.role === 'ALL')) ||
+        (selectedRoleFilter === 'TEACHER' && (step.role === 'TEACHER' || step.role === 'ALL')) ||
+        (selectedRoleFilter === 'STUDENT' && (step.role === 'STUDENT' || step.role === 'ALL'));
+      if (!matchesRole) return false;
+    }
 
     const q = searchQuery.toLowerCase();
     const matchesSearch =
@@ -291,12 +500,27 @@ export const WorkflowGuideView: React.FC<WorkflowGuideViewProps> = ({ user, onNa
       step.tips.toLowerCase().includes(q) ||
       step.roleLabel.toLowerCase().includes(q);
 
-    return matchesRole && matchesSearch;
+    return matchesSearch;
   });
 
-  const completionPercent = Math.round(
-    (ALL_STEPS.filter(s => completedStepIds.includes(s.id)).length / ALL_STEPS.length) * 100
-  );
+  const completionPercent = activeStepList.length > 0
+    ? Math.round((activeStepList.filter(s => completedStepIds.includes(s.id)).length / activeStepList.length) * 100)
+    : 0;
+
+  // Title and subtitle tailored to role
+  const viewHeader = isStudent ? {
+    badge: 'Panduan Ujian Siswa',
+    title: 'Langkah Pengerjaan Ujian CBT (Siswa)',
+    desc: 'Panduan lengkap 5 langkah pengerjaan ujian CBT MAS MUHAMMADIYAH CIKARAMAS: verifikasi presensi fisik di sekolah, token soal, pengerjaan lockdown anti-curang, hingga penyerahan hasil.'
+  } : isTeacher ? {
+    badge: 'Alur Kerja Pengajar & Pengawas',
+    title: 'Langkah Pelaksanaan CBT (Guru & Pengawas)',
+    desc: 'Alur operasional pengajar: penyusunan dan import bank soal (Word .docx), penjadwalan multi-kelas, barcode presensi sekolah harian, live monitoring ruang, hingga rekapitulasi nilai.'
+  } : {
+    badge: 'Panduan & Alur Kerja Terstruktur',
+    title: 'Langkah Pengerjaan & Alur Aplikasi CBT',
+    desc: 'Panduan operasional komprehensif mulai dari penataan Data Master Madrasah, Jadwal KBM & BKG, Pembuatan Bank Soal, Penjadwalan CBT, Pengawasan Real-time, hingga Rekapitulasi Nilai Akhir.'
+  };
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto pb-12">
@@ -306,21 +530,22 @@ export const WorkflowGuideView: React.FC<WorkflowGuideViewProps> = ({ user, onNa
           <div className="space-y-2 max-w-2xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#E7F0FF] text-[#0052CC] border border-[#B3D1FF] text-xs font-semibold">
               <Compass className="w-3.5 h-3.5" />
-              <span>Panduan & Alur Kerja Terstruktur</span>
+              <span>{viewHeader.badge}</span>
             </div>
             <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-[#1A1C1E] tracking-tight">
-              Langkah Pengerjaan & Alur Aplikasi CBT
+              {viewHeader.title}
             </h1>
             <p className="text-xs sm:text-sm text-[#495057] leading-relaxed">
-              Panduan operasional komprehensif mulai dari penataan Data Master Madrasah, Jadwal KBM & BKG, 
-              Pembuatan Bank Soal, Penjadwalan CBT, Pengawasan Real-time, hingga Rekapitulasi Nilai Akhir.
+              {viewHeader.desc}
             </p>
           </div>
 
           {/* PROGRESS TRACKER CARD */}
           <div className="shrink-0 bg-white border border-[#CED4DA] p-4 rounded-xl shadow-xs min-w-[240px] space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-[#1A1C1E]">Progress Persiapan</span>
+              <span className="text-xs font-bold text-[#1A1C1E]">
+                {isStudent ? 'Kemajuan Ujian Anda' : 'Progress Alur Kerja'}
+              </span>
               <span className="text-sm font-bold font-mono text-[#0052CC]">{completionPercent}%</span>
             </div>
             {/* Progress Bar */}
@@ -331,12 +556,12 @@ export const WorkflowGuideView: React.FC<WorkflowGuideViewProps> = ({ user, onNa
               />
             </div>
             <div className="flex items-center justify-between text-[11px] text-[#6C757D]">
-              <span>{completedStepIds.length} dari {ALL_STEPS.length} tahap selesai</span>
+              <span>{completedStepIds.length} dari {activeStepList.length} tahap ditandai</span>
               {completedStepIds.length > 0 && (
                 <button
                   type="button"
                   onClick={handleResetChecklist}
-                  className="text-rose-600 hover:text-rose-700 hover:underline flex items-center gap-1 font-medium"
+                  className="text-rose-600 hover:text-rose-700 hover:underline flex items-center gap-1 font-medium cursor-pointer"
                 >
                   <RotateCcw className="w-3 h-3" />
                   <span>Reset</span>
@@ -346,55 +571,66 @@ export const WorkflowGuideView: React.FC<WorkflowGuideViewProps> = ({ user, onNa
           </div>
         </div>
 
-        {/* ROLE TABS & QUICK CONTROLS */}
+        {/* ROLE TABS & QUICK CONTROLS (Only show role tabs for admin) */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-6 mt-6 border-t border-[#DEE2E6]">
-          {/* Role Filter Tabs */}
-          <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
-            <button
-              type="button"
-              onClick={() => setSelectedRoleFilter('ALL')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                selectedRoleFilter === 'ALL'
-                  ? 'bg-white text-[#0052CC] shadow-xs'
-                  : 'text-[#495057] hover:text-[#1A1C1E]'
-              }`}
-            >
-              Semua Alur ({ALL_STEPS.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedRoleFilter('ADMIN')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                selectedRoleFilter === 'ADMIN'
-                  ? 'bg-white text-[#0052CC] shadow-xs'
-                  : 'text-[#495057] hover:text-[#1A1C1E]'
-              }`}
-            >
-              👑 Alur Panitia / Admin
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedRoleFilter('TEACHER')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                selectedRoleFilter === 'TEACHER'
-                  ? 'bg-white text-[#0052CC] shadow-xs'
-                  : 'text-[#495057] hover:text-[#1A1C1E]'
-              }`}
-            >
-              👨‍🏫 Alur Guru (Buat Soal)
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedRoleFilter('STUDENT')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                selectedRoleFilter === 'STUDENT'
-                  ? 'bg-white text-[#0052CC] shadow-xs'
-                  : 'text-[#495057] hover:text-[#1A1C1E]'
-              }`}
-            >
-              🎓 Alur Siswa (Peserta)
-            </button>
-          </div>
+          {isAdmin ? (
+            <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setSelectedRoleFilter('ALL')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  selectedRoleFilter === 'ALL'
+                    ? 'bg-white text-[#0052CC] shadow-xs'
+                    : 'text-[#495057] hover:text-[#1A1C1E]'
+                }`}
+              >
+                Semua Alur ({ALL_STEPS.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedRoleFilter('ADMIN')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  selectedRoleFilter === 'ADMIN'
+                    ? 'bg-white text-[#0052CC] shadow-xs'
+                    : 'text-[#495057] hover:text-[#1A1C1E]'
+                }`}
+              >
+                👑 Alur Panitia / Admin
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedRoleFilter('TEACHER')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  selectedRoleFilter === 'TEACHER'
+                    ? 'bg-white text-[#0052CC] shadow-xs'
+                    : 'text-[#495057] hover:text-[#1A1C1E]'
+                }`}
+              >
+                👨‍🏫 Alur Guru
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedRoleFilter('STUDENT')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  selectedRoleFilter === 'STUDENT'
+                    ? 'bg-white text-[#0052CC] shadow-xs'
+                    : 'text-[#495057] hover:text-[#1A1C1E]'
+                }`}
+              >
+                🎓 Alur Siswa
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1.5 rounded-xl bg-blue-50 text-[#0052CC] border border-blue-200 font-bold text-xs flex items-center gap-1.5">
+                {isStudent ? <GraduationCap className="w-4 h-4" /> : <BookOpen className="w-4 h-4" />}
+                <span>{isStudent ? 'Akun Siswa Peserta' : 'Akun Guru & Pengawas Ruang'}</span>
+              </span>
+              <span className="text-xs text-slate-500">
+                {activeStepList.length} Tahapan Utama
+              </span>
+            </div>
+          )}
 
           {/* Search Box & Print SOP button */}
           <div className="flex items-center gap-2">
@@ -411,8 +647,8 @@ export const WorkflowGuideView: React.FC<WorkflowGuideViewProps> = ({ user, onNa
             <button
               type="button"
               onClick={() => window.print()}
-              className="px-3 py-1.5 rounded-lg bg-white border border-[#CED4DA] hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors shrink-0"
-              title="Cetak format cetak lembar SOP panduan"
+              className="px-3 py-1.5 rounded-lg bg-white border border-[#CED4DA] hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors shrink-0 cursor-pointer"
+              title="Cetak format lembar SOP panduan"
             >
               <Printer className="w-3.5 h-3.5 text-slate-600" />
               <span className="hidden sm:inline">Cetak Panduan</span>

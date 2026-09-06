@@ -292,7 +292,126 @@ export function downloadQuestionsTemplate(
   ];
   XLSX.utils.book_append_sheet(workbook, guideSheet, 'PANDUAN_TIPE_SOAL');
 
-  XLSX.writeFile(workbook, `Template_Import_Soal_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  XLSX.writeFile(workbook, `Template_Soal_Kolom_Terpisah_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+/**
+ * Downloads a pre-formatted Excel template with a single combined options column (OPSI_PILIHAN)
+ * Ideal for users who prepare or copy options A-E in a single cell or prefer a compact layout.
+ */
+export function downloadQuestionsSingleColumnTemplate(
+  examsOrId: Exam[] | string = 'UJN-CONTOH',
+  defaultExamIdOrTitle: string = 'Contoh Ujian'
+) {
+  const workbook = XLSX.utils.book_new();
+
+  let targetExamId = 'UJN-01';
+  let availableExams: Exam[] = [];
+
+  if (Array.isArray(examsOrId)) {
+    availableExams = examsOrId;
+    targetExamId = defaultExamIdOrTitle && defaultExamIdOrTitle !== 'ALL' ? defaultExamIdOrTitle : (availableExams[0]?.ID || 'UJN-01');
+  } else if (typeof examsOrId === 'string' && examsOrId.trim()) {
+    targetExamId = examsOrId;
+  }
+
+  const sampleData = [
+    {
+      ID_UJIAN: targetExamId,
+      TIPE_SOAL: 'MCQ',
+      PERTANYAAN: 'Hasil dari perhitungan 25 × 14 - 150 adalah ...',
+      OPSI_PILIHAN: 'A. 150\nB. 200\nC. 250\nD. 300\nE. 350',
+      KUNCI_JAWABAN: 'B',
+      BOBOT_POIN: 10
+    },
+    {
+      ID_UJIAN: targetExamId,
+      TIPE_SOAL: 'COMPLEX_MCQ',
+      PERTANYAAN: 'Pernyataan mana sajakah yang BENAR mengenai fotosintesis tumbuhan? (Pilihan Ganda Kompleks)',
+      OPSI_PILIHAN: 'A. Memerlukan energi cahaya matahari\nB. Menghasilkan gas oksigen (O2)\nC. Hanya berlangsung saat malam gelap\nD. Memerlukan karbondioksida (CO2) dan air\nE. Menghasilkan gas karbon monoksida',
+      KUNCI_JAWABAN: 'A, B, D',
+      BOBOT_POIN: 15
+    },
+    {
+      ID_UJIAN: targetExamId,
+      TIPE_SOAL: 'TRUE_FALSE',
+      PERTANYAAN: 'Paus dan lumba-lumba merupakan mamalia laut yang bernapas menggunakan paru-paru.',
+      OPSI_PILIHAN: 'A. Benar\nB. Salah',
+      KUNCI_JAWABAN: 'BENAR',
+      BOBOT_POIN: 10
+    },
+    {
+      ID_UJIAN: targetExamId,
+      TIPE_SOAL: 'MATCHING',
+      PERTANYAAN: 'Jodohkan istilah berikut: 1. Barometer, 2. Anemometer, 3. Higrometer',
+      OPSI_PILIHAN: 'A. Kelembaban udara\nB. Tekanan udara\nC. Kecepatan angin',
+      KUNCI_JAWABAN: '1-B; 2-C; 3-A',
+      BOBOT_POIN: 15
+    },
+    {
+      ID_UJIAN: targetExamId,
+      TIPE_SOAL: 'SHORT_ANSWER',
+      PERTANYAAN: 'Ibu kota negara Jepang yang merupakan pusat pemerintahan adalah ...',
+      OPSI_PILIHAN: '',
+      KUNCI_JAWABAN: 'Tokyo',
+      BOBOT_POIN: 10
+    },
+    {
+      ID_UJIAN: targetExamId,
+      TIPE_SOAL: 'ESSAY',
+      PERTANYAAN: 'Jelaskan perbedaan mendasar antara peredaran darah besar dan peredaran darah kecil pada manusia!',
+      OPSI_PILIHAN: '',
+      KUNCI_JAWABAN: 'Rubrik: Sirkulasi sistemik (jantung ke seluruh tubuh) vs pulmonal (jantung ke paru-paru).',
+      BOBOT_POIN: 20
+    }
+  ];
+
+  const sheet = XLSX.utils.json_to_sheet(sampleData);
+  sheet['!cols'] = [
+    { wch: 18 }, // ID_UJIAN
+    { wch: 16 }, // TIPE_SOAL
+    { wch: 65 }, // PERTANYAAN
+    { wch: 45 }, // OPSI_PILIHAN (1 Kolom Praktis)
+    { wch: 18 }, // KUNCI_JAWABAN
+    { wch: 12 }  // BOBOT_POIN
+  ];
+  XLSX.utils.book_append_sheet(workbook, sheet, 'BANK_SOAL');
+
+  // Sheet 2: REFERENSI_UJIAN
+  if (availableExams.length > 0) {
+    const examRefData = availableExams.map(e => ({
+      ID_UJIAN: e.ID,
+      JUDUL_UJIAN: e.TITLE,
+      ID_KELAS: e.CLASS_ID || 'Semua Kelas',
+      DURASI_MENIT: e.DURATION_MIN || 60
+    }));
+    const examSheet = XLSX.utils.json_to_sheet(examRefData);
+    examSheet['!cols'] = [
+      { wch: 18 },
+      { wch: 38 },
+      { wch: 16 },
+      { wch: 14 }
+    ];
+    XLSX.utils.book_append_sheet(workbook, examSheet, 'REFERENSI_UJIAN');
+  }
+
+  // Petunjuk
+  const guideData = [
+    { NO: 1, ATURAN: 'Format Kolom OPSI_PILIHAN', KETERANGAN: 'Semua pilihan A s/d E ditulis dalam satu sel yang sama, dipisahkan baris baru (Enter/Alt+Enter) atau format "A. ... B. ... C. ..."' },
+    { NO: 2, ATURAN: 'Pilihan Ganda (MCQ)', KETERANGAN: 'Awali tiap opsi dengan huruf: A. Pilihan satu \\n B. Pilihan dua \\n C. Pilihan tiga \\n D. Pilihan empat \\n E. Pilihan lima' },
+    { NO: 3, ATURAN: 'Benar / Salah (TRUE_FALSE)', KETERANGAN: 'Kolom OPSI_PILIHAN bisa diisi "A. Benar \\n B. Salah" atau dikosongkan (sistem mengisinya otomatis).' },
+    { NO: 4, ATURAN: 'Kunci Jawaban', KETERANGAN: 'Untuk PG isi huruf kunci: A / B / C / D / E. Untuk PG Kompleks isi opsi: A, B, D. Untuk Isian Singkat isi teks jawaban.' }
+  ];
+
+  const guideSheet = XLSX.utils.json_to_sheet(guideData);
+  guideSheet['!cols'] = [
+    { wch: 6 },
+    { wch: 30 },
+    { wch: 80 }
+  ];
+  XLSX.utils.book_append_sheet(workbook, guideSheet, 'PETUNJUK_PENGISIAN');
+
+  XLSX.writeFile(workbook, `Template_Soal_1Kolom_Opsi_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 /**

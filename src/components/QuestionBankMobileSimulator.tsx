@@ -543,10 +543,12 @@ export const QuestionBankMobileSimulator: React.FC<QuestionBankMobileSimulatorPr
                     <div className="space-y-1">
                       {details.rightItems.map(r => (
                         <div key={r.key} className="flex items-start gap-1.5 text-[11px]">
-                          <span className="font-bold font-mono px-1 bg-white border border-[#CED4DA] rounded text-[#0052CC]">
+                          <span className="font-bold font-mono px-1 bg-white border border-[#CED4DA] rounded text-[#0052CC] shrink-0">
                             {r.key}
                           </span>
-                          <span className="text-[#343A40]">{r.text}</span>
+                          <div className="text-[#343A40] flex-1">
+                            <RichContentRenderer content={r.text} inline />
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -571,7 +573,9 @@ export const QuestionBankMobileSimulator: React.FC<QuestionBankMobileSimulatorPr
                             <span className="w-5 h-5 rounded-full bg-[#0052CC] text-white text-[10px] font-bold flex items-center justify-center shrink-0">
                               {left.key}
                             </span>
-                            <span className="flex-1">{left.text}</span>
+                            <div className="flex-1">
+                              <RichContentRenderer content={left.text} inline />
+                            </div>
                           </div>
 
                           <div className="flex items-center justify-between gap-2 pt-1">

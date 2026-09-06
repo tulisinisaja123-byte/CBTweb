@@ -90,7 +90,7 @@ export function cleanRightItemText(raw: string): string {
  */
 export function parseMatchingDetails(
   questionInput: any = '',
-  options: { [key: string]: string | undefined } = {},
+  options: Record<string, any> = {},
   extraDataStr?: string,
   answerKey: string = ''
 ): MatchingDetails {

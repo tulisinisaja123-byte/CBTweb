@@ -47,14 +47,16 @@ import {
   RefreshCw,
   Check,
   CheckSquare,
-  ShieldCheck
+  ShieldCheck,
+  Calendar
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { User, ClassItem, Subject, Exam, Question, SchoolSettings, CurriculumType, AssessmentType } from '../types';
+import { User, ClassItem, Subject, Exam, Question, SchoolSettings, CurriculumType, AssessmentType, QuestionBankPackage } from '../types';
 import {
   downloadStudentTemplate,
   downloadTeacherTemplate,
   downloadQuestionsTemplate,
+  downloadQuestionsSingleColumnTemplate,
   downloadClassTemplate
 } from '../utils/excelTemplates';
 import { downloadQuestionsWordTemplate } from '../utils/wordTemplates';
@@ -72,6 +74,16 @@ import {
 import { QuestionBankPrintModal } from './QuestionBankPrintModal';
 import { QuestionBankMobileSimulator } from './QuestionBankMobileSimulator';
 import { RichContentRenderer } from './RichContentRenderer';
+import {
+  getQuestionBanks,
+  saveQuestionBank,
+  deleteQuestionBank,
+  cleanUnwantedDemoQuestionBanks,
+  STORAGE_KEYS,
+  getStorage,
+  setStorage,
+  safeStorageSet
+} from '../services/lmsStorage';
 import {
   CURRICULUM_CONFIG,
   OFFICIAL_SUBJECT_PRESETS,
@@ -172,18 +184,25 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
   const [selectedBankPackageId, setSelectedBankPackageId] = useState<string | null>(null);
   const [inputChooserTarget, setInputChooserTarget] = useState<any | null>(null);
   const [newBankPackageModalOpen, setNewBankPackageModalOpen] = useState<boolean>(false);
+  const [editingBankPackage, setEditingBankPackage] = useState<any | null>(null);
   const [newBankPackageForm, setNewBankPackageForm] = useState<{
+    ID?: string;
     ASSESSMENT_TYPE_ID: string;
     CLASS_ID: string;
+    CLASS_IDS: string[];
     SUBJECT_ID: string;
+    TARGET_QUESTION_COUNT: number;
     TITLE: string;
   }>({
     ASSESSMENT_TYPE_ID: 'SH',
     CLASS_ID: '',
+    CLASS_IDS: [],
     SUBJECT_ID: '',
+    TARGET_QUESTION_COUNT: 25,
     TITLE: ''
   });
   const [deletePackageConfirm, setDeletePackageConfirm] = useState<{ id: string; title: string; count: number } | null>(null);
+  const [cleanDemoConfirmOpen, setCleanDemoConfirmOpen] = useState<boolean>(false);
   const [questionViewMode, setQuestionViewMode] = useState<'PACKAGES' | 'ALL_QUESTIONS'>('PACKAGES');
   const [packageQuestionFilterType, setPackageQuestionFilterType] = useState<string>('ALL');
   const [packageQuestionSearch, setPackageQuestionSearch] = useState<string>('');
@@ -230,8 +249,26 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
         ids.add(ex.ID);
       }
     });
+    // Sertakan seluruh paket Bank Soal yang persisten untuk guru
+    try {
+      const storedBanks = getQuestionBanks();
+      storedBanks.forEach(sb => {
+        if (sb.CREATED_BY === currentUser.ID || (teacherSubjectIdSet && teacherSubjectIdSet.has(sb.SUBJECT_ID))) {
+          ids.add(sb.ID);
+        }
+      });
+    } catch {}
+    // Sertakan juga ID bank soal dari daftar butir soal jika mata pelajaran sesuai pengampu atau dibuat guru
+    if (entityName === 'QUESTIONS' && Array.isArray(rows)) {
+      rows.forEach(q => {
+        if (q.CREATED_BY === currentUser.ID || (q.SUBJECT_ID && teacherSubjectIdSet && teacherSubjectIdSet.has(q.SUBJECT_ID))) {
+          if (q.EXAM_ID) ids.add(q.EXAM_ID);
+          if (q.BANK_ID) ids.add(q.BANK_ID);
+        }
+      });
+    }
     return ids;
-  }, [currentUser, lookup?.exams, teacherSubjectIdSet]);
+  }, [currentUser, lookup?.exams, teacherSubjectIdSet, entityName, rows]);
 
   // Lookup maps
   const classNameMap = useMemo(() => {
@@ -308,7 +345,9 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
       setNewBankPackageForm({
         ASSESSMENT_TYPE_ID: defaultType,
         CLASS_ID: defaultClass,
+        CLASS_IDS: defaultClass ? [defaultClass] : [],
         SUBJECT_ID: defaultSubject,
+        TARGET_QUESTION_COUNT: 25,
         TITLE: `Bank Soal ${defaultType} ${subjName} (${clsName})`
       });
     }
@@ -323,66 +362,151 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
       TITLE: string;
       SUBJECT_ID: string;
       CLASS_ID: string;
+      CLASS_IDS: string[];
+      TARGET_QUESTION_COUNT: number;
       ASSESSMENT_TYPE_ID: string;
       questions: any[];
       questionCount: number;
       mcqCount: number;
       essayCount: number;
       complexCount: number;
+      interactiveCount: number;
       totalPoints: number;
     }>();
 
-    // Populate exams (if TEACHER, only include exams created by or subjects taught by the teacher)
+    // 1. Populate from persistent Question Banks (Source of Truth untuk Bank Soal)
+    let storedBanks: QuestionBankPackage[] = [];
+    try {
+      storedBanks = getQuestionBanks();
+      storedBanks.forEach(sb => {
+        const hasAccess = currentUser.ROLE !== 'TEACHER' ||
+          sb.CREATED_BY === currentUser.ID ||
+          (teacherSubjectIdSet && teacherSubjectIdSet.has(sb.SUBJECT_ID));
+        if (hasAccess) {
+          const cIds = Array.isArray(sb.CLASS_IDS) && sb.CLASS_IDS.length > 0
+            ? sb.CLASS_IDS
+            : (sb.CLASS_ID && sb.CLASS_ID !== 'ALL' ? [sb.CLASS_ID] : []);
+          map.set(sb.ID, {
+            ID: sb.ID,
+            TITLE: sb.TITLE,
+            SUBJECT_ID: sb.SUBJECT_ID || '',
+            CLASS_ID: sb.CLASS_ID || cIds[0] || '',
+            CLASS_IDS: cIds,
+            TARGET_QUESTION_COUNT: Number(sb.TARGET_QUESTION_COUNT || 0),
+            ASSESSMENT_TYPE_ID: sb.ASSESSMENT_TYPE_ID || 'SH',
+            questions: [],
+            questionCount: 0,
+            mcqCount: 0,
+            essayCount: 0,
+            complexCount: 0,
+            interactiveCount: 0,
+            totalPoints: 0
+          });
+        }
+      });
+    } catch {}
+
+    // 2. Sertakan juga jadwal ujian (jika ada soal yang ditautkan ke ujian yang belum ada di map)
     const examsToConsider = (lookup?.exams || []).filter(ex => {
       if (currentUser.ROLE !== 'TEACHER') return true;
       return teacherExamIdSet ? teacherExamIdSet.has(ex.ID) : false;
     });
 
     examsToConsider.forEach(ex => {
-      map.set(ex.ID, {
-        ID: ex.ID,
-        TITLE: ex.TITLE,
-        SUBJECT_ID: ex.SUBJECT_ID || '',
-        CLASS_ID: ex.CLASS_ID || '',
-        ASSESSMENT_TYPE_ID: ex.ASSESSMENT_TYPE_ID || 'SH',
-        questions: [],
-        questionCount: 0,
-        mcqCount: 0,
-        essayCount: 0,
-        complexCount: 0,
-        totalPoints: 0
-      });
-    });
-
-    // Populate with question items
-    rows.forEach(q => {
-      const examId = q.EXAM_ID || 'UNASSIGNED';
-      // If teacher, skip questions not belonging to teacher's exams
-      if (currentUser.ROLE === 'TEACHER' && teacherExamIdSet && !teacherExamIdSet.has(examId)) {
-        return;
-      }
-      if (!map.has(examId)) {
-        if (currentUser.ROLE === 'TEACHER') return;
-        map.set(examId, {
-          ID: examId,
-          TITLE: examNameMap[examId] || (examId === 'UNASSIGNED' ? 'Bank Soal Umum' : `Paket Soal (${examId})`),
-          SUBJECT_ID: lookup?.subjects?.[0]?.ID || '',
-          CLASS_ID: lookup?.classes?.[0]?.ID || '',
-          ASSESSMENT_TYPE_ID: q.ASSESSMENT_TYPE_ID || 'SH',
+      if (!map.has(ex.ID) && (!ex.QUESTION_BANK_ID || !map.has(ex.QUESTION_BANK_ID))) {
+        const classIds = Array.isArray(ex.CLASS_IDS) && ex.CLASS_IDS.length > 0
+          ? ex.CLASS_IDS
+          : (ex.CLASS_ID && ex.CLASS_ID !== 'ALL' ? [ex.CLASS_ID] : []);
+        map.set(ex.ID, {
+          ID: ex.ID,
+          TITLE: ex.TITLE,
+          SUBJECT_ID: ex.SUBJECT_ID || '',
+          CLASS_ID: ex.CLASS_ID || classIds[0] || '',
+          CLASS_IDS: classIds,
+          TARGET_QUESTION_COUNT: Number(ex.TARGET_QUESTION_COUNT || 0),
+          ASSESSMENT_TYPE_ID: ex.ASSESSMENT_TYPE_ID || 'SH',
           questions: [],
           questionCount: 0,
           mcqCount: 0,
           essayCount: 0,
           complexCount: 0,
+          interactiveCount: 0,
           totalPoints: 0
         });
       }
-      const pkg = map.get(examId)!;
+    });
+
+    // 3. Masukkan butir-butir soal ke paket yang sesuai
+    rows.forEach(q => {
+      // Prioritaskan paket yang ada di map: q.BANK_ID atau q.EXAM_ID
+      const targetId = (q.BANK_ID && map.has(q.BANK_ID))
+        ? q.BANK_ID
+        : ((q.EXAM_ID && map.has(q.EXAM_ID))
+          ? q.EXAM_ID
+          : (q.BANK_ID || q.EXAM_ID || 'UNASSIGNED'));
+
+      // If teacher, check if teacher has access to this exam/subject/bank
+      const hasTeacherAccess = currentUser.ROLE !== 'TEACHER' ||
+        (teacherExamIdSet && (teacherExamIdSet.has(targetId) || (q.EXAM_ID && teacherExamIdSet.has(q.EXAM_ID)) || (q.BANK_ID && teacherExamIdSet.has(q.BANK_ID)))) ||
+        q.CREATED_BY === currentUser.ID ||
+        (q.SUBJECT_ID && teacherSubjectIdSet && teacherSubjectIdSet.has(q.SUBJECT_ID));
+
+      if (!hasTeacherAccess) {
+        return;
+      }
+
+      if (!map.has(targetId)) {
+        const persistentBank = storedBanks.find(b => b.ID === targetId || b.ID === q.BANK_ID || b.ID === q.EXAM_ID);
+        const examObj = (lookup?.exams || []).find(e => e.ID === targetId || e.ID === q.EXAM_ID);
+        const isFisika = targetId.toLowerCase().includes('fisika') || targetId === 'UJ-001' || examObj?.TITLE?.toLowerCase().includes('fisika') || persistentBank?.TITLE?.toLowerCase().includes('fisika');
+
+        const fallbackTitle = persistentBank?.TITLE || examObj?.TITLE || (isFisika ? 'Bank Soal Fisika X' : (examNameMap[targetId] || (targetId === 'UNASSIGNED' ? 'Bank Soal Umum' : `Bank Soal (${targetId})`)));
+
+        let resolvedSubj = persistentBank?.SUBJECT_ID || examObj?.SUBJECT_ID || q.SUBJECT_ID;
+        if (!resolvedSubj || (isFisika && resolvedSubj !== 'MP-T1')) {
+          if (isFisika) {
+            resolvedSubj = 'MP-T1';
+          } else if (currentUser.ROLE === 'TEACHER' && teacherSubjectIdSet && teacherSubjectIdSet.size > 0) {
+            resolvedSubj = Array.from(teacherSubjectIdSet)[0];
+          } else {
+            const fSubj = (lookup?.subjects || []).find(s => s.NAME?.toLowerCase().includes('fisika') || s.CODE === 'T1');
+            resolvedSubj = fSubj ? fSubj.ID : 'MP-T1';
+          }
+        }
+
+        const resolvedClassId = persistentBank?.CLASS_ID || examObj?.CLASS_ID || (isFisika ? 'KLS-X1' : (lookup?.classes?.[0]?.ID || 'ALL'));
+        const resolvedClassIds = (persistentBank?.CLASS_IDS && persistentBank.CLASS_IDS.length > 0)
+          ? persistentBank.CLASS_IDS
+          : ((examObj?.CLASS_IDS && examObj.CLASS_IDS.length > 0) ? examObj.CLASS_IDS : (isFisika ? ['KLS-X1'] : (lookup?.classes?.[0]?.ID ? [lookup.classes[0].ID] : ['ALL'])));
+
+        map.set(targetId, {
+          ID: targetId,
+          TITLE: fallbackTitle,
+          SUBJECT_ID: resolvedSubj,
+          CLASS_ID: resolvedClassId,
+          CLASS_IDS: resolvedClassIds,
+          TARGET_QUESTION_COUNT: persistentBank?.TARGET_QUESTION_COUNT || 0,
+          ASSESSMENT_TYPE_ID: persistentBank?.ASSESSMENT_TYPE_ID || examObj?.ASSESSMENT_TYPE_ID || q.ASSESSMENT_TYPE_ID || (isFisika ? 'SAS' : 'SH'),
+          questions: [],
+          questionCount: 0,
+          mcqCount: 0,
+          essayCount: 0,
+          complexCount: 0,
+          interactiveCount: 0,
+          totalPoints: 0
+        });
+      }
+      const pkg = map.get(targetId)!;
       pkg.questions.push(q);
       pkg.questionCount = pkg.questions.length;
-      if (q.TYPE === 'MCQ') pkg.mcqCount += 1;
+      if (q.TYPE === 'MCQ' || !q.TYPE) pkg.mcqCount += 1;
       else if (q.TYPE === 'ESSAY') pkg.essayCount += 1;
-      else if (q.TYPE === 'COMPLEX_MCQ') pkg.complexCount += 1;
+      else if (q.TYPE === 'COMPLEX_MCQ') {
+        pkg.complexCount += 1;
+        pkg.interactiveCount += 1;
+      } else if (q.TYPE === 'TRUE_FALSE' || q.TYPE === 'MATCHING' || q.TYPE === 'SHORT_ANSWER') {
+        pkg.interactiveCount += 1;
+      }
       pkg.totalPoints += Number(q.POINTS || 0);
     });
 
@@ -397,15 +521,24 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
     if (selectedAssessmentCategory !== 'ALL') {
       list = list.filter(pkg => {
         const typeId = pkg.ASSESSMENT_TYPE_ID || 'SH';
+        if (typeId === selectedAssessmentCategory) return true;
+        const aType = availableAssessmentTypes.find(a => a.CODE === typeId || a.ID === typeId);
+        if (aType && (aType.CODE === selectedAssessmentCategory || aType.ID === selectedAssessmentCategory)) {
+          return true;
+        }
         if (selectedAssessmentCategory === 'SH') {
           return typeId === 'SH' || typeId === 'SLM' || typeId === 'PH';
         }
-        return typeId === selectedAssessmentCategory;
+        return false;
       });
     }
 
     if (selectedClassFilter !== 'ALL') {
-      list = list.filter(pkg => pkg.CLASS_ID === selectedClassFilter);
+      list = list.filter(pkg => {
+        if (pkg.CLASS_ID === selectedClassFilter) return true;
+        if (Array.isArray(pkg.CLASS_IDS) && pkg.CLASS_IDS.includes(selectedClassFilter)) return true;
+        return false;
+      });
     }
 
     if (searchTerm.trim()) {
@@ -477,14 +610,29 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
   const handleDeletePackageConfirm = async () => {
     if (!deletePackageConfirm) return;
     try {
-      await onDelete(deletePackageConfirm.id, 'EXAMS');
+      const targetId = deletePackageConfirm.id;
+
+      // 1. Hapus butir-butir soal yang terkait dengan paket bank soal ini dari storage
+      const allQ = getStorage<Question[]>(STORAGE_KEYS.QUESTIONS, []);
+      const remainingQ = allQ.filter(q => q.EXAM_ID !== targetId && q.BANK_ID !== targetId);
+      setStorage(STORAGE_KEYS.QUESTIONS, remainingQ);
+      safeStorageSet('LMS_QUESTIONS_USER_MODIFIED', 'true');
+
+      // 2. Hapus dari daftar bank soal persisten
+      deleteQuestionBank(targetId);
+
+      // 3. Hapus entitas jika ada di exams/schedules
+      try {
+        await onDelete(targetId, 'EXAMS');
+      } catch {}
+
       setDeletePackageConfirm(null);
-      if (selectedBankPackageId === deletePackageConfirm.id) {
+      if (selectedBankPackageId === targetId) {
         setSelectedBankPackageId(null);
       }
       setStatusMessage({
         type: 'success',
-        text: 'Paket Bank Soal beserta seluruh butir soalnya berhasil dihapus.'
+        text: 'Paket Bank Soal beserta seluruh butir soalnya berhasil dihapus secara permanen.'
       });
       setTimeout(() => setStatusMessage(null), 4000);
     } catch (err: any) {
@@ -492,43 +640,151 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
     }
   };
 
-  const handleCreateNewBankPackage = async (e: React.FormEvent) => {
+  const handleCleanDemoQuestionBanks = () => {
+    try {
+      cleanUnwantedDemoQuestionBanks();
+      setCleanDemoConfirmOpen(false);
+      setStatusMessage({
+        type: 'success',
+        text: 'Paket demo berhasil dibersihkan! Bank Soal Fisika X Anda telah dipulihkan dan siap digunakan.'
+      });
+      setTimeout(() => setStatusMessage(null), 4500);
+      try {
+        window.dispatchEvent(new CustomEvent('LMS_DATA_CHANGED', { detail: { entity: 'QUESTIONS' } }));
+      } catch {}
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: err.message || 'Gagal membersihkan paket demo.' });
+    }
+  };
+
+  const openCreateBankPackageModal = () => {
+    const defaultType = availableAssessmentTypes[0]?.CODE || 'SH';
+    const defaultClass = lookup.classes?.[0]?.ID || '';
+    const defaultSubject = (currentUser.ROLE === 'TEACHER' && teacherSubjects.length > 0)
+      ? teacherSubjects[0]?.ID
+      : (lookup.subjects?.[0]?.ID || '');
+    const sName = subjectNameMap[defaultSubject] || lookup.subjects?.[0]?.NAME || 'Mapel';
+    const cName = classNameMap[defaultClass] || lookup.classes?.[0]?.NAME || 'Kelas';
+
+    setEditingBankPackage(null);
+    setNewBankPackageForm({
+      ASSESSMENT_TYPE_ID: defaultType,
+      CLASS_ID: defaultClass,
+      CLASS_IDS: defaultClass ? [defaultClass] : [],
+      SUBJECT_ID: defaultSubject,
+      TARGET_QUESTION_COUNT: 25,
+      TITLE: `Bank Soal ${defaultType} ${sName} (${cName})`
+    });
+    setNewBankPackageModalOpen(true);
+  };
+
+  const openEditBankPackageModal = (pkg: any) => {
+    setEditingBankPackage(pkg);
+    const classIds = Array.isArray(pkg.CLASS_IDS) && pkg.CLASS_IDS.length > 0
+      ? pkg.CLASS_IDS
+      : (pkg.CLASS_ID && pkg.CLASS_ID !== 'ALL' ? [pkg.CLASS_ID] : []);
+    const isFis = pkg.ID === 'UJ-001' || pkg.ID?.toLowerCase().includes('fisika') || pkg.TITLE?.toLowerCase().includes('fisika');
+    const effectiveSubj = isFis ? 'MP-T1' : (pkg.SUBJECT_ID || '');
+    setNewBankPackageForm({
+      ID: pkg.ID,
+      ASSESSMENT_TYPE_ID: pkg.ASSESSMENT_TYPE_ID || (isFis ? 'SAS' : 'SH'),
+      CLASS_ID: pkg.CLASS_ID || (isFis ? 'KLS-X1' : (classIds[0] || '')),
+      CLASS_IDS: classIds.length > 0 ? classIds : (isFis ? ['KLS-X1'] : []),
+      SUBJECT_ID: effectiveSubj,
+      TARGET_QUESTION_COUNT: Number(pkg.TARGET_QUESTION_COUNT || pkg.questionCount || 0),
+      TITLE: pkg.TITLE || ''
+    });
+    setNewBankPackageModalOpen(true);
+  };
+
+  const handleSaveBankPackage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newBankPackageForm.TITLE.trim()) {
       setStatusMessage({ type: 'error', text: 'Judul Bank Soal wajib diisi.' });
       return;
     }
     try {
-      const payload = {
+      const primaryClass = newBankPackageForm.CLASS_IDS[0] || newBankPackageForm.CLASS_ID || 'ALL';
+      const pkgId = editingBankPackage?.ID || `BANK-${Date.now()}`;
+      const payload: any = {
         _entityType: 'EXAMS',
+        ID: pkgId,
         TITLE: newBankPackageForm.TITLE.trim(),
         SUBJECT_ID: newBankPackageForm.SUBJECT_ID,
-        CLASS_ID: newBankPackageForm.CLASS_ID,
+        CLASS_ID: primaryClass,
+        CLASS_IDS: newBankPackageForm.CLASS_IDS.length > 0 ? newBankPackageForm.CLASS_IDS : [primaryClass],
+        TARGET_QUESTION_COUNT: Number(newBankPackageForm.TARGET_QUESTION_COUNT || 0),
         ASSESSMENT_TYPE_ID: newBankPackageForm.ASSESSMENT_TYPE_ID,
         CREATED_BY: currentUser.ID,
-        STATUS: 'DRAFT',
-        DURATION_MIN: 60,
+        STATUS: editingBankPackage ? (editingBankPackage.STATUS || 'DRAFT') : 'DRAFT',
+        DURATION_MIN: editingBankPackage ? (editingBankPackage.DURATION_MIN || 60) : 60,
         RANDOMIZE: true,
         MAX_VIOLATIONS: 3
       };
+      if (editingBankPackage?.ID) {
+        payload._originalId = editingBankPackage.ID;
+      }
+
+      // Simpan ke bank soal persisten
+      saveQuestionBank({
+        ID: pkgId,
+        TITLE: payload.TITLE,
+        SUBJECT_ID: payload.SUBJECT_ID,
+        CLASS_ID: payload.CLASS_ID,
+        CLASS_IDS: payload.CLASS_IDS,
+        ASSESSMENT_TYPE_ID: payload.ASSESSMENT_TYPE_ID,
+        TARGET_QUESTION_COUNT: payload.TARGET_QUESTION_COUNT,
+        CREATED_BY: currentUser.ID,
+        CREATED_AT: new Date().toISOString()
+      });
+
+      // Update seluruh butir soal yang berada di paket bank soal ini agar mapel dan jenis penilaiannya sinkron
+      const allQ = getStorage<Question[]>(STORAGE_KEYS.QUESTIONS, []);
+      let qUpdated = false;
+      const updatedQ = allQ.map(q => {
+        if (q.EXAM_ID === pkgId || q.BANK_ID === pkgId) {
+          qUpdated = true;
+          return {
+            ...q,
+            SUBJECT_ID: payload.SUBJECT_ID,
+            ASSESSMENT_TYPE_ID: payload.ASSESSMENT_TYPE_ID
+          };
+        }
+        return q;
+      });
+      if (qUpdated) {
+        setStorage(STORAGE_KEYS.QUESTIONS, updatedQ);
+        safeStorageSet('LMS_QUESTIONS_USER_MODIFIED', 'true');
+      }
+
       await onSave(payload, 'EXAMS');
       setNewBankPackageModalOpen(false);
+      setEditingBankPackage(null);
       setStatusMessage({
         type: 'success',
-        text: 'Paket Bank Soal baru berhasil dibuat! Anda dapat langsung klik "Input" untuk mulai mengisi soal.'
+        text: editingBankPackage
+          ? 'Paket Bank Soal berhasil diperbarui!'
+          : 'Paket Bank Soal baru berhasil dibuat! Anda dapat langsung klik "Input" untuk mulai mengisi soal.'
       });
       setTimeout(() => setStatusMessage(null), 4500);
     } catch (err: any) {
-      setStatusMessage({ type: 'error', text: err.message || 'Gagal membuat paket bank soal.' });
+      setStatusMessage({ type: 'error', text: err.message || 'Gagal menyimpan paket bank soal.' });
     }
   };
 
-  const updateAutoBankPackageTitle = (typeId: string, classId: string, subjectId: string) => {
+  const updateAutoBankPackageTitle = (typeId: string, classIds: string[], subjectId: string) => {
     const aType = availableAssessmentTypes.find(a => a.CODE === typeId || a.ID === typeId);
     const typeLabel = aType?.CODE || typeId;
     const sName = subjectNameMap[subjectId] || 'Mapel';
-    const cName = classNameMap[classId] || 'Kelas';
-    return `Bank Soal ${typeLabel} ${sName} (${cName})`;
+    let cLabel = 'Semua Kelas';
+    if (classIds && classIds.length > 0) {
+      if (classIds.length === 1) {
+        cLabel = classNameMap[classIds[0]] || classIds[0];
+      } else {
+        cLabel = `${classIds.length} Rombel (${classIds.map(c => classNameMap[c] || c).slice(0, 2).join(', ')}${classIds.length > 2 ? '...' : ''})`;
+      }
+    }
+    return `Bank Soal ${typeLabel} ${sName} (${cLabel})`;
   };
 
   const handleAutoSyncTeacherCodes = async () => {
@@ -617,7 +873,12 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
     }
     if (entityName === 'QUESTIONS') {
       if (currentUser.ROLE === 'TEACHER' && teacherExamIdSet) {
-        list = list.filter(q => teacherExamIdSet.has(q.EXAM_ID));
+        list = list.filter(q =>
+          teacherExamIdSet.has(q.EXAM_ID) ||
+          (q.BANK_ID && teacherExamIdSet.has(q.BANK_ID)) ||
+          q.CREATED_BY === currentUser.ID ||
+          (q.SUBJECT_ID && teacherSubjectIdSet && teacherSubjectIdSet.has(q.SUBJECT_ID))
+        );
       }
       if (selectedAssessmentCategory !== 'ALL') {
         list = list.filter(q => {
@@ -941,7 +1202,20 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
     setLoading(true);
     try {
       if (bulkDeleteConfirm.type === 'PACKAGES') {
-        await onDelete(bulkDeleteConfirm.ids, 'EXAMS');
+        const targetIds = new Set(bulkDeleteConfirm.ids);
+        // Hapus seluruh butir soal yang tertaut ke paket-paket ini
+        const allQ = getStorage<Question[]>(STORAGE_KEYS.QUESTIONS, []);
+        const remainingQ = allQ.filter(q => !targetIds.has(q.EXAM_ID) && (!q.BANK_ID || !targetIds.has(q.BANK_ID)));
+        setStorage(STORAGE_KEYS.QUESTIONS, remainingQ);
+        safeStorageSet('LMS_QUESTIONS_USER_MODIFIED', 'true');
+
+        // Hapus dari bank soal persisten
+        bulkDeleteConfirm.ids.forEach(id => deleteQuestionBank(id));
+
+        try {
+          await onDelete(bulkDeleteConfirm.ids, 'EXAMS');
+        } catch {}
+
         setSelectedPackageIds(new Set());
         if (selectedBankPackageId && bulkDeleteConfirm.ids.includes(selectedBankPackageId)) {
           setSelectedBankPackageId(null);
@@ -952,6 +1226,7 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
         });
       } else if (bulkDeleteConfirm.type === 'QUESTIONS') {
         await onDelete(bulkDeleteConfirm.ids, 'QUESTIONS');
+        safeStorageSet('LMS_QUESTIONS_USER_MODIFIED', 'true');
         setSelectedQuestionIds(new Set());
         setStatusMessage({
           type: 'success',
@@ -1226,10 +1501,19 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                 type="button"
                 onClick={() => downloadQuestionsTemplate(lookup.exams, lookup.exams[0]?.ID || 'EXAM-01')}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-[#E6F4EA] border border-[#CEEAD6] text-[#137333] hover:bg-[#D4EDDA] font-medium text-xs transition-colors shadow-xs"
-                title="Unduh file format Excel (.xlsx) untuk import bank soal"
+                title="Unduh file format Excel (.xlsx) dengan kolom OPSI_A s/d E terpisah"
               >
                 <Download className="w-3.5 h-3.5 text-[#137333]" />
-                <span>Template Excel</span>
+                <span>Template Excel (A-E)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadQuestionsSingleColumnTemplate(lookup.exams, lookup.exams[0]?.ID || 'EXAM-01')}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800 hover:bg-emerald-100 font-medium text-xs transition-colors shadow-xs"
+                title="Unduh format praktis: semua opsi jawaban digabung dalam 1 kolom OPSI_PILIHAN"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-700" />
+                <span>Template Excel (1 Kolom)</span>
               </button>
             </>
           )}
@@ -1353,9 +1637,9 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
             </div>
           </div>
 
-          {/* Folder Filter Chips for Bank Soal */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-            {/* Folder 1: Semua Soal */}
+          {/* Folder Filter Chips for Bank Soal - Dinamis sesuai pengaturan di Jenis Penilaian */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
+            {/* Folder 1: Semua Bank Soal */}
             <button
               type="button"
               onClick={() => setSelectedAssessmentCategory('ALL')}
@@ -1374,196 +1658,73 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                 <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
                   selectedAssessmentCategory === 'ALL' ? 'bg-white/25 text-white' : 'bg-[#F1F3F5] text-[#495057]'
                 }`}>
-                  {rows.length}
+                  {questionPackages.length} Paket
                 </span>
               </div>
               <div className="mt-2">
                 <div className="font-bold text-xs truncate">Semua Bank Soal</div>
                 <div className={`text-[10px] mt-0.5 ${selectedAssessmentCategory === 'ALL' ? 'text-white/80' : 'text-[#6C757D]'}`}>
-                  Seluruh kategori
+                  {rows.length} Total Butir Soal
                 </div>
               </div>
             </button>
 
-            {/* Folder 2: Sumatif Harian (SH) - Rutin/Per Bab */}
-            {(() => {
-              const count = questionCountsByAssessment['SH'] || 0;
-              const isSelected = selectedAssessmentCategory === 'SH';
+            {/* Folder Dinamis dari Jenis Penilaian */}
+            {availableAssessmentTypes.map((at, idx) => {
+              const atCode = at.CODE || at.ID;
+              const isSelected = selectedAssessmentCategory === atCode || selectedAssessmentCategory === at.ID;
+
+              // Count packages and questions for this assessment type
+              const matchingPkgs = questionPackages.filter(p => {
+                const pType = p.ASSESSMENT_TYPE_ID || 'SH';
+                return pType === atCode || pType === at.ID;
+              });
+              const pkgCount = matchingPkgs.length;
+              const qCount = matchingPkgs.reduce((acc, p) => acc + p.questionCount, 0) || (questionCountsByAssessment[atCode] || 0);
+
+              // Palette variations for visual clarity
+              const paletteColors = [
+                { bg: 'bg-[#137333]', lightBg: 'bg-[#E6F4EA]', text: 'text-[#137333]', border: 'border-[#137333]', ring: 'ring-[#137333]/30' },
+                { bg: 'bg-[#0052CC]', lightBg: 'bg-[#E8F0FE]', text: 'text-[#0052CC]', border: 'border-[#0052CC]', ring: 'ring-[#0052CC]/30' },
+                { bg: 'bg-[#7E22CE]', lightBg: 'bg-purple-100', text: 'text-[#7E22CE]', border: 'border-[#7E22CE]', ring: 'ring-[#7E22CE]/30' },
+                { bg: 'bg-[#0284C7]', lightBg: 'bg-sky-100', text: 'text-[#0284C7]', border: 'border-[#0284C7]', ring: 'ring-[#0284C7]/30' },
+                { bg: 'bg-[#C2410C]', lightBg: 'bg-orange-100', text: 'text-[#C2410C]', border: 'border-[#C2410C]', ring: 'ring-[#C2410C]/30' },
+                { bg: 'bg-[#0F9D58]', lightBg: 'bg-emerald-100', text: 'text-[#0F9D58]', border: 'border-[#0F9D58]', ring: 'ring-[#0F9D58]/30' }
+              ];
+              const pal = paletteColors[idx % paletteColors.length];
+
               return (
                 <button
+                  key={at.ID || at.CODE}
                   type="button"
-                  onClick={() => setSelectedAssessmentCategory('SH')}
+                  onClick={() => setSelectedAssessmentCategory(isSelected ? 'ALL' : atCode)}
                   className={`p-3 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
                     isSelected
-                      ? 'bg-[#137333] text-white border-[#137333] shadow-md ring-2 ring-[#137333]/30'
-                      : 'bg-white border-[#CED4DA] hover:border-[#137333] text-[#1A1C1E] hover:bg-[#F8F9FA]'
+                      ? `${pal.bg} text-white ${pal.border} shadow-md ring-2 ${pal.ring}`
+                      : `bg-white border-[#CED4DA] hover:${pal.border} text-[#1A1C1E] hover:bg-[#F8F9FA]`
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <div className={`w-7 h-7 rounded-md flex items-center justify-center ${
-                      isSelected ? 'bg-white/20 text-white' : 'bg-[#E6F4EA] text-[#137333]'
+                      isSelected ? 'bg-white/20 text-white' : `${pal.lightBg} ${pal.text}`
                     }`}>
                       <Layers className="w-4 h-4" />
                     </div>
                     <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                      isSelected ? 'bg-white/25 text-white' : 'bg-[#E6F4EA] text-[#137333]'
+                      isSelected ? 'bg-white/25 text-white' : `${pal.lightBg} ${pal.text}`
                     }`}>
-                      {count}
+                      {pkgCount} Paket
                     </span>
                   </div>
                   <div className="mt-2">
-                    <div className="font-bold text-xs truncate">Sumatif Harian (SH)</div>
-                    <div className={`text-[10px] mt-0.5 truncate ${isSelected ? 'text-white/80' : 'text-[#6C757D]'}`}>
-                      Rutin / per Bab
+                    <div className="font-bold text-xs truncate">[{at.CODE}] {at.NAME}</div>
+                    <div className={`text-[10px] mt-0.5 truncate ${isSelected ? 'text-white/85' : 'text-[#6C757D]'}`}>
+                      {at.FREQUENCY || at.CATEGORY || 'Penilaian'} • {qCount} Soal
                     </div>
                   </div>
                 </button>
               );
-            })()}
-
-            {/* Folder 3: Sumatif Awal Semester */}
-            {(() => {
-              const count = (questionCountsByAssessment['SAP'] || 0) + (questionCountsByAssessment['AWAL'] || 0);
-              const isSelected = selectedAssessmentCategory === 'SAP' || selectedAssessmentCategory === 'AWAL';
-              return (
-                <button
-                  type="button"
-                  onClick={() => setSelectedAssessmentCategory('SAP')}
-                  className={`p-3 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
-                    isSelected
-                      ? 'bg-[#0284C7] text-white border-[#0284C7] shadow-md ring-2 ring-[#0284C7]/30'
-                      : 'bg-white border-[#CED4DA] hover:border-[#0284C7] text-[#1A1C1E] hover:bg-[#F8F9FA]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className={`w-7 h-7 rounded-md flex items-center justify-center ${
-                      isSelected ? 'bg-white/20 text-white' : 'bg-sky-100 text-[#0284C7]'
-                    }`}>
-                      <Sparkles className="w-4 h-4" />
-                    </div>
-                    <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                      isSelected ? 'bg-white/25 text-white' : 'bg-sky-50 text-[#0284C7]'
-                    }`}>
-                      {count}
-                    </span>
-                  </div>
-                  <div className="mt-2">
-                    <div className="font-bold text-xs truncate">Sumatif Awal (Awal)</div>
-                    <div className={`text-[10px] mt-0.5 truncate ${isSelected ? 'text-white/80' : 'text-[#6C757D]'}`}>
-                      Awal Semester
-                    </div>
-                  </div>
-                </button>
-              );
-            })()}
-
-            {/* Folder 4: Sumatif Tengah Semester (STS) */}
-            {(() => {
-              const count = (questionCountsByAssessment['STS'] || 0) + (questionCountsByAssessment['PTS'] || 0);
-              const isSelected = selectedAssessmentCategory === 'STS' || selectedAssessmentCategory === 'PTS';
-              return (
-                <button
-                  type="button"
-                  onClick={() => setSelectedAssessmentCategory('STS')}
-                  className={`p-3 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
-                    isSelected
-                      ? 'bg-[#7E22CE] text-white border-[#7E22CE] shadow-md ring-2 ring-[#7E22CE]/30'
-                      : 'bg-white border-[#CED4DA] hover:border-[#7E22CE] text-[#1A1C1E] hover:bg-[#F8F9FA]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className={`w-7 h-7 rounded-md flex items-center justify-center ${
-                      isSelected ? 'bg-white/20 text-white' : 'bg-purple-100 text-[#7E22CE]'
-                    }`}>
-                      <Clock className="w-4 h-4" />
-                    </div>
-                    <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                      isSelected ? 'bg-white/25 text-white' : 'bg-purple-50 text-[#7E22CE]'
-                    }`}>
-                      {count}
-                    </span>
-                  </div>
-                  <div className="mt-2">
-                    <div className="font-bold text-xs truncate">Sumatif Tengah (STS)</div>
-                    <div className={`text-[10px] mt-0.5 truncate ${isSelected ? 'text-white/80' : 'text-[#6C757D]'}`}>
-                      Tengah Semester
-                    </div>
-                  </div>
-                </button>
-              );
-            })()}
-
-            {/* Folder 5: Sumatif Akhir Semester (SAS) */}
-            {(() => {
-              const count = (questionCountsByAssessment['SAS'] || 0) + (questionCountsByAssessment['PAS'] || 0);
-              const isSelected = selectedAssessmentCategory === 'SAS' || selectedAssessmentCategory === 'PAS';
-              return (
-                <button
-                  type="button"
-                  onClick={() => setSelectedAssessmentCategory('SAS')}
-                  className={`p-3 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
-                    isSelected
-                      ? 'bg-[#0052CC] text-white border-[#0052CC] shadow-md ring-2 ring-[#0052CC]/30'
-                      : 'bg-white border-[#CED4DA] hover:border-[#0052CC] text-[#1A1C1E] hover:bg-[#F8F9FA]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className={`w-7 h-7 rounded-md flex items-center justify-center ${
-                      isSelected ? 'bg-white/20 text-white' : 'bg-[#E8F0FE] text-[#0052CC]'
-                    }`}>
-                      <Award className="w-4 h-4" />
-                    </div>
-                    <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                      isSelected ? 'bg-white/25 text-white' : 'bg-[#E8F0FE] text-[#0052CC]'
-                    }`}>
-                      {count}
-                    </span>
-                  </div>
-                  <div className="mt-2">
-                    <div className="font-bold text-xs truncate">Sumatif Akhir (SAS)</div>
-                    <div className={`text-[10px] mt-0.5 truncate ${isSelected ? 'text-white/80' : 'text-[#6C757D]'}`}>
-                      Akhir Semester
-                    </div>
-                  </div>
-                </button>
-              );
-            })()}
-
-            {/* Folder 6: Sumatif Akhir Jenjang (SAJ) */}
-            {(() => {
-              const count = (questionCountsByAssessment['SAJ'] || 0) + (questionCountsByAssessment['US'] || 0);
-              const isSelected = selectedAssessmentCategory === 'SAJ' || selectedAssessmentCategory === 'US';
-              return (
-                <button
-                  type="button"
-                  onClick={() => setSelectedAssessmentCategory('SAJ')}
-                  className={`p-3 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
-                    isSelected
-                      ? 'bg-[#C2410C] text-white border-[#C2410C] shadow-md ring-2 ring-[#C2410C]/30'
-                      : 'bg-white border-[#CED4DA] hover:border-[#C2410C] text-[#1A1C1E] hover:bg-[#F8F9FA]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className={`w-7 h-7 rounded-md flex items-center justify-center ${
-                      isSelected ? 'bg-white/20 text-white' : 'bg-orange-100 text-[#C2410C]'
-                    }`}>
-                      <GraduationCap className="w-4 h-4" />
-                    </div>
-                    <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                      isSelected ? 'bg-white/25 text-white' : 'bg-orange-50 text-[#C2410C]'
-                    }`}>
-                      {count}
-                    </span>
-                  </div>
-                  <div className="mt-2">
-                    <div className="font-bold text-xs truncate">Akhir Jenjang (SAJ)</div>
-                    <div className={`text-[10px] mt-0.5 truncate ${isSelected ? 'text-white/80' : 'text-[#6C757D]'}`}>
-                      Kelulusan Jenjang
-                    </div>
-                  </div>
-                </button>
-              );
-            })()}
+            })}
           </div>
         </div>
       )}
@@ -1796,6 +1957,31 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                 )}
                 <span>Abjad {sortField === 'NAME' && sortOrder === 'desc' ? 'Z - A' : 'A - Z'}</span>
               </button>
+
+              {/* Buat/Tambah Bank Soal Button & Bersihkan Demo (Sejajar dengan Abjad A - Z) */}
+              {entityName === 'QUESTIONS' && isEditable && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setCleanDemoConfirmOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white border border-[#CED4DA] hover:bg-[#FFF5F5] hover:border-[#FAD2CF] text-[#DC3545] text-xs font-semibold transition-all shadow-2xs cursor-pointer"
+                    title="Bersihkan paket bank soal dummy bawaan & pulihkan Bank Soal Fisika X"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Bersihkan Paket Demo</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={openCreateBankPackageModal}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[#0052CC] hover:bg-[#0047B3] text-white text-xs font-bold transition-all shadow-2xs cursor-pointer"
+                    title="Buat/Tambah wadah Bank Soal baru (pilih jenis penilaian, kelas berlaku, mapel, jumlah soal)"
+                  >
+                    <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                    <span>Buat Bank Soal</span>
+                  </button>
+                </div>
+              )}
 
               {/* Group View Toggle for Students */}
               {entityName === 'USERS' && filterRole === 'STUDENT' && (
@@ -2787,13 +2973,15 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                                             : 'bg-[#FCE8E6] border-[#FAD2CF] text-[#C5221F]'
                                         }`}
                                       >
-                                        <span className="font-bold text-[#0052CC]">
-                                          [{left.key}] {left.text.slice(0, 20)}
+                                        <span className="font-bold text-[#0052CC] inline-flex items-center gap-1">
+                                          <span>[{left.key}]</span>
+                                          <RichContentRenderer content={left.text} inline />
                                         </span>
                                         <span className="text-[#6C757D]">➔</span>
                                         {hasValidMatch ? (
-                                          <span className="font-bold text-[#137333]">
-                                            [{matchedRightKey}] {matchedRightItem.text.slice(0, 20)}
+                                          <span className="font-bold text-[#137333] inline-flex items-center gap-1">
+                                            <span>[{matchedRightKey}]</span>
+                                            <RichContentRenderer content={matchedRightItem.text} inline />
                                           </span>
                                         ) : (
                                           <span className="font-bold text-[#C5221F] italic">
@@ -2844,7 +3032,7 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                                         {left.key}
                                       </span>
                                       <div className="flex-1 text-xs text-[#1A1C1E] font-medium">
-                                        {left.text}
+                                        <RichContentRenderer content={left.text} inline />
                                       </div>
                                     </div>
                                   ))}
@@ -2871,7 +3059,7 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                                         {right.key}
                                       </span>
                                       <div className="flex-1 text-xs text-[#1A1C1E]">
-                                        {right.text}
+                                        <RichContentRenderer content={right.text} inline />
                                       </div>
                                     </div>
                                   ))}
@@ -3592,20 +3780,60 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                                 })()}
                               </td>
 
-                              {/* 3. Kelas */}
+                              {/* 3. Kelas Berlaku */}
                               <td className="px-5 py-3.5">
                                 {(() => {
-                                  const cls = lookup.classes.find(c => c.ID === row.CLASS_ID);
-                                  const cName = cls?.NAME || classNameMap[row.CLASS_ID] || row.CLASS_ID || 'Semua Kelas';
-                                  return (
-                                    <div className="flex flex-col gap-0.5">
-                                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#F8F9FA] text-[#1A1C1E] border border-[#DEE2E6] text-xs font-bold w-fit">
-                                        <GraduationCap className="w-3.5 h-3.5 text-[#0052CC]" />
-                                        <span>{cName}</span>
+                                  const classIds: string[] = Array.isArray(row.CLASS_IDS) && row.CLASS_IDS.length > 0
+                                    ? row.CLASS_IDS
+                                    : (row.CLASS_ID ? [row.CLASS_ID] : []);
+
+                                  if (classIds.length === 0 || classIds[0] === 'ALL') {
+                                    return (
+                                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#F8F9FA] text-[#495057] border border-[#DEE2E6] text-xs font-semibold">
+                                        <GraduationCap className="w-3.5 h-3.5 text-[#6C757D]" />
+                                        <span>Semua Kelas</span>
                                       </span>
-                                      {cls?.LEVEL && (
-                                        <span className="text-[11px] text-[#6C757D]">Tingkat {cls.LEVEL}</span>
-                                      )}
+                                    );
+                                  }
+
+                                  if (classIds.length === 1) {
+                                    const cls = lookup.classes.find(c => c.ID === classIds[0]);
+                                    const cName = cls?.NAME || classNameMap[classIds[0]] || classIds[0];
+                                    return (
+                                      <div className="flex flex-col gap-0.5">
+                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#F0F5FF] text-[#0052CC] border border-[#B3D1FF] text-xs font-bold w-fit">
+                                          <GraduationCap className="w-3.5 h-3.5 text-[#0052CC]" />
+                                          <span>{cName}</span>
+                                        </span>
+                                        {cls?.LEVEL && (
+                                          <span className="text-[10px] text-[#6C757D]">Tingkat {cls.LEVEL}</span>
+                                        )}
+                                      </div>
+                                    );
+                                  }
+
+                                  return (
+                                    <div className="flex flex-col gap-1">
+                                      <div className="flex flex-wrap gap-1 max-w-xs">
+                                        {classIds.slice(0, 2).map(cId => {
+                                          const cls = lookup.classes.find(c => c.ID === cId);
+                                          const cName = cls?.NAME || classNameMap[cId] || cId;
+                                          return (
+                                            <span key={cId} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#F0F5FF] text-[#0052CC] border border-[#B3D1FF] text-[11px] font-bold">
+                                              <GraduationCap className="w-3 h-3 text-[#0052CC]" />
+                                              <span>{cName}</span>
+                                            </span>
+                                          );
+                                        })}
+                                        {classIds.length > 2 && (
+                                          <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#F1F3F5] text-[#495057] text-[10px] font-semibold">
+                                            +{classIds.length - 2} Rombel
+                                          </span>
+                                        )}
+                                      </div>
+                                      <span className="text-[10px] text-[#6C757D] font-medium">
+                                        Berlaku untuk {classIds.length} rombel kelas
+                                      </span>
                                     </div>
                                   );
                                 })()}
@@ -3629,30 +3857,29 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                                 })()}
                               </td>
 
-                              {/* 5. Jumlah Soal */}
+                              {/* 5. Jumlah Soal & Target */}
                               <td className="px-5 py-3.5 text-center">
-                                {row.questionCount > 0 ? (
-                                  <div className="inline-flex flex-col items-center">
-                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#E8F0FE] text-[#0052CC] border border-[#B3D1FF] text-xs font-bold">
-                                      <HelpCircle className="w-3.5 h-3.5" />
-                                      <span>{row.questionCount} Soal</span>
+                                <div className="inline-flex flex-col items-center">
+                                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#E8F0FE] text-[#0052CC] border border-[#B3D1FF] text-xs font-bold">
+                                    <HelpCircle className="w-3.5 h-3.5" />
+                                    <span>
+                                      {row.questionCount}
+                                      {row.TARGET_QUESTION_COUNT > 0 ? ` / ${row.TARGET_QUESTION_COUNT}` : ''} Soal
                                     </span>
-                                    <span className="text-[10px] text-[#6C757D] mt-1 font-medium">
-                                      {row.mcqCount > 0 ? `${row.mcqCount} PG` : ''}
-                                      {row.essayCount > 0 ? ` • ${row.essayCount} Uraian` : ''}
-                                      {row.complexCount > 0 ? ` • ${row.complexCount} Kompleks` : ''}
-                                    </span>
-                                  </div>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#F1F3F5] text-[#6C757D] border border-[#DEE2E6] text-xs font-medium">
-                                    0 Soal (Kosong)
                                   </span>
-                                )}
+                                  <span className="text-[10px] text-[#6C757D] mt-1 font-medium">
+                                    {row.mcqCount > 0 ? `${row.mcqCount} PG` : ''}
+                                    {row.essayCount > 0 ? ` • ${row.essayCount} Uraian` : ''}
+                                    {row.interactiveCount > 0 ? ` • ${row.interactiveCount} Interaktif` : ''}
+                                    {row.questionCount === 0 && '0 Soal (Kosong)'}
+                                  </span>
+                                </div>
                               </td>
 
-                              {/* 6. Aksi (input, lihat, hapus) */}
+                              {/* 6. Kolom Aksi (Input, Lihat, Edit, Konversi, Hapus) */}
                               <td className="px-5 py-3.5 text-right">
-                                <div className="flex items-center justify-end gap-2">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {/* 1. Input */}
                                   <button
                                     type="button"
                                     onClick={() => setInputChooserTarget(row)}
@@ -3662,6 +3889,8 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                                     <Plus className="w-3.5 h-3.5" />
                                     <span>Input</span>
                                   </button>
+
+                                  {/* 2. Lihat */}
                                   <button
                                     type="button"
                                     onClick={() => setSelectedBankPackageId(row.ID)}
@@ -3671,6 +3900,34 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                                     <Eye className="w-3.5 h-3.5" />
                                     <span>Lihat</span>
                                   </button>
+
+                                  {/* 2b. Jadwalkan Ujian */}
+                                  {onNavigate && (
+                                    <button
+                                      type="button"
+                                      onClick={() => onNavigate('exams')}
+                                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-[#E8F0FE] border border-[#B3D1FF] hover:bg-[#D2E3FC] text-[#0052CC] text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+                                      title="Buat sesi jadwal ujian CBT dari paket bank soal ini"
+                                    >
+                                      <Calendar className="w-3.5 h-3.5" />
+                                      <span>Jadwalkan</span>
+                                    </button>
+                                  )}
+
+                                  {/* 3. Edit */}
+                                  {isEditable && (
+                                    <button
+                                      type="button"
+                                      onClick={() => openEditBankPackageModal(row)}
+                                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-white border border-[#CED4DA] hover:bg-[#F8F9FA] text-[#495057] text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+                                      title="Edit pengaturan bank soal (jenis penilaian, kelas berlaku, mapel, target soal)"
+                                    >
+                                      <Edit2 className="w-3.5 h-3.5 text-[#495057]" />
+                                      <span>Edit</span>
+                                    </button>
+                                  )}
+
+                                  {/* 4. Hapus */}
                                   {isEditable && (
                                     <button
                                       type="button"
@@ -6069,31 +6326,34 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
         </div>
       )}
 
-      {/* New Bank Soal Modal */}
+      {/* New / Edit Bank Soal Modal */}
       {newBankPackageModalOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl border border-[#DEE2E6] space-y-4">
+          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl border border-[#DEE2E6] space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-start justify-between gap-2 border-b border-[#DEE2E6] pb-3">
               <div>
                 <h3 className="text-base font-bold text-[#1A1C1E] flex items-center gap-2">
                   <Folder className="w-5 h-5 text-[#0052CC]" />
-                  <span>Buat Bank Soal Baru</span>
+                  <span>{editingBankPackage ? 'Edit Pengaturan Bank Soal' : 'Buat / Tambah Bank Soal Baru'}</span>
                 </h3>
                 <p className="text-xs text-[#6C757D] mt-0.5">
-                  Tentukan jenis penilaian, kelas, dan mata pelajaran untuk wadah bank soal
+                  Tentukan jenis penilaian, kelas yang berlaku, mata pelajaran, dan target jumlah soal
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setNewBankPackageModalOpen(false)}
+                onClick={() => {
+                  setNewBankPackageModalOpen(false);
+                  setEditingBankPackage(null);
+                }}
                 className="text-[#ADB5BD] hover:text-[#1A1C1E] p-1 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateNewBankPackage} className="space-y-4">
-              {/* Jenis Penilaian */}
+            <form onSubmit={handleSaveBankPackage} className="space-y-4">
+              {/* 1. Jenis Penilaian */}
               <div>
                 <label className="block text-xs font-bold text-[#1A1C1E] mb-1">
                   Jenis Penilaian *
@@ -6105,7 +6365,7 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                     setNewBankPackageForm(prev => ({
                       ...prev,
                       ASSESSMENT_TYPE_ID: val,
-                      TITLE: updateAutoBankPackageTitle(val, prev.CLASS_ID, prev.SUBJECT_ID)
+                      TITLE: updateAutoBankPackageTitle(val, prev.CLASS_IDS, prev.SUBJECT_ID)
                     }));
                   }}
                   className="w-full px-3 py-2 border border-[#CED4DA] rounded-lg text-xs bg-white text-[#1A1C1E] outline-none focus:border-[#0052CC]"
@@ -6118,38 +6378,99 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                   ))}
                 </select>
                 <span className="text-[10px] text-[#6C757D] mt-0.5 block">
-                  Frekuensi dan istilah disesuaikan dengan jenis penilaian (contoh: Sumatif Akhir Semester, Sumatif Harian, dll).
+                  Frekuensi dan jenis penilaian disesuaikan dengan pengaturan di Jenis Penilaian.
                 </span>
               </div>
 
-              {/* Kelas */}
+              {/* 2. Berlaku untuk Kelas Apa Saja */}
               <div>
-                <label className="block text-xs font-bold text-[#1A1C1E] mb-1">
-                  Target Rombel / Kelas *
-                </label>
-                <select
-                  value={newBankPackageForm.CLASS_ID}
-                  onChange={e => {
-                    const val = e.target.value;
-                    setNewBankPackageForm(prev => ({
-                      ...prev,
-                      CLASS_ID: val,
-                      TITLE: updateAutoBankPackageTitle(prev.ASSESSMENT_TYPE_ID, val, prev.SUBJECT_ID)
-                    }));
-                  }}
-                  className="w-full px-3 py-2 border border-[#CED4DA] rounded-lg text-xs bg-white text-[#1A1C1E] outline-none focus:border-[#0052CC]"
-                  required
-                >
-                  <option value="" disabled>-- Pilih Kelas --</option>
-                  {(lookup?.classes || []).map(c => (
-                    <option key={c.ID} value={c.ID}>
-                      {c.NAME} {c.LEVEL ? `(Tingkat ${c.LEVEL})` : ''}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-[#1A1C1E]">
+                    Berlaku untuk Kelas Apa Saja *
+                  </label>
+                  <div className="flex items-center gap-1.5 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allIds = (lookup?.classes || []).map(c => c.ID);
+                        setNewBankPackageForm(prev => ({
+                          ...prev,
+                          CLASS_IDS: allIds,
+                          CLASS_ID: allIds[0] || 'ALL',
+                          TITLE: updateAutoBankPackageTitle(prev.ASSESSMENT_TYPE_ID, allIds, prev.SUBJECT_ID)
+                        }));
+                      }}
+                      className="text-[#0052CC] hover:underline font-semibold cursor-pointer"
+                    >
+                      Pilih Semua
+                    </button>
+                    <span className="text-[#CED4DA]">•</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewBankPackageForm(prev => ({
+                          ...prev,
+                          CLASS_IDS: [],
+                          CLASS_ID: '',
+                          TITLE: updateAutoBankPackageTitle(prev.ASSESSMENT_TYPE_ID, [], prev.SUBJECT_ID)
+                        }));
+                      }}
+                      className="text-[#6C757D] hover:underline cursor-pointer"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-2.5 border border-[#CED4DA] rounded-lg bg-[#F8F9FA] max-h-40 overflow-y-auto space-y-1.5">
+                  {(lookup?.classes || []).map(c => {
+                    const isChecked = newBankPackageForm.CLASS_IDS.includes(c.ID);
+                    return (
+                      <label
+                        key={c.ID}
+                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs cursor-pointer transition-colors ${
+                          isChecked
+                            ? 'bg-white text-[#0052CC] font-bold border border-[#B3D1FF] shadow-2xs'
+                            : 'hover:bg-white/80 text-[#495057]'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={e => {
+                            const next = e.target.checked
+                              ? [...newBankPackageForm.CLASS_IDS, c.ID]
+                              : newBankPackageForm.CLASS_IDS.filter(id => id !== c.ID);
+                            setNewBankPackageForm(prev => ({
+                              ...prev,
+                              CLASS_IDS: next,
+                              CLASS_ID: next[0] || '',
+                              TITLE: updateAutoBankPackageTitle(prev.ASSESSMENT_TYPE_ID, next, prev.SUBJECT_ID)
+                            }));
+                          }}
+                          className="w-3.5 h-3.5 rounded text-[#0052CC] focus:ring-[#0052CC] cursor-pointer"
+                        />
+                        <span>{c.NAME}</span>
+                        {c.LEVEL && (
+                          <span className="text-[10px] text-[#6C757D] font-normal ml-auto">
+                            Tingkat {c.LEVEL}
+                          </span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-[#6C757D] mt-1">
+                  <span>
+                    Terpilih: <b>{newBankPackageForm.CLASS_IDS.length} rombel kelas</b>
+                  </span>
+                  <span className="text-[10px] text-[#0052CC]">
+                    Soal ini hanya akan muncul di jadwal kelas yang dipilih
+                  </span>
+                </div>
               </div>
 
-              {/* Mata Pelajaran */}
+              {/* 3. Mata Pelajaran */}
               <div>
                 <label className="block text-xs font-bold text-[#1A1C1E] mb-1">
                   Mata Pelajaran *
@@ -6161,7 +6482,7 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                     setNewBankPackageForm(prev => ({
                       ...prev,
                       SUBJECT_ID: val,
-                      TITLE: updateAutoBankPackageTitle(prev.ASSESSMENT_TYPE_ID, prev.CLASS_ID, val)
+                      TITLE: updateAutoBankPackageTitle(prev.ASSESSMENT_TYPE_ID, prev.CLASS_IDS, val)
                     }));
                   }}
                   className="w-full px-3 py-2 border border-[#CED4DA] rounded-lg text-xs bg-white text-[#1A1C1E] outline-none focus:border-[#0052CC]"
@@ -6181,7 +6502,44 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                 )}
               </div>
 
-              {/* Judul Bank Soal */}
+              {/* 4. Jumlah Soal */}
+              <div>
+                <label className="block text-xs font-bold text-[#1A1C1E] mb-1">
+                  Target Jumlah Soal *
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={newBankPackageForm.TARGET_QUESTION_COUNT || 25}
+                    onChange={e => setNewBankPackageForm(prev => ({ ...prev, TARGET_QUESTION_COUNT: parseInt(e.target.value, 10) || 0 }))}
+                    className="w-32 px-3 py-2 border border-[#CED4DA] rounded-lg text-xs bg-white text-[#1A1C1E] outline-none focus:border-[#0052CC]"
+                    required
+                  />
+                  <div className="flex items-center gap-1.5">
+                    {[20, 25, 30, 40, 50].map(cnt => (
+                      <button
+                        key={cnt}
+                        type="button"
+                        onClick={() => setNewBankPackageForm(prev => ({ ...prev, TARGET_QUESTION_COUNT: cnt }))}
+                        className={`px-2 py-1 rounded text-[11px] font-semibold border cursor-pointer ${
+                          newBankPackageForm.TARGET_QUESTION_COUNT === cnt
+                            ? 'bg-[#0052CC] text-white border-[#0052CC]'
+                            : 'bg-white text-[#495057] border-[#CED4DA] hover:bg-[#F8F9FA]'
+                        }`}
+                      >
+                        {cnt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <span className="text-[10px] text-[#6C757D] mt-1 block">
+                  Target butir soal yang direncanakan untuk paket penilaian ini.
+                </span>
+              </div>
+
+              {/* 5. Judul Bank Soal */}
               <div>
                 <label className="block text-xs font-bold text-[#1A1C1E] mb-1">
                   Judul / Nama Paket Bank Soal *
@@ -6192,14 +6550,17 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                   onChange={e => setNewBankPackageForm(prev => ({ ...prev, TITLE: e.target.value }))}
                   className="w-full px-3 py-2 border border-[#CED4DA] rounded-lg text-xs bg-white text-[#1A1C1E] outline-none focus:border-[#0052CC]"
                   required
-                  placeholder="Contoh: Bank Soal SAS Matematika (Kelas 7A)"
+                  placeholder="Contoh: Bank Soal SAS Matematika (Kelas 7A, 7B)"
                 />
               </div>
 
               <div className="pt-3 border-t border-[#DEE2E6] flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setNewBankPackageModalOpen(false)}
+                  onClick={() => {
+                    setNewBankPackageModalOpen(false);
+                    setEditingBankPackage(null);
+                  }}
                   className="px-4 py-2 rounded-md border border-[#CED4DA] text-[#495057] text-xs font-medium hover:bg-[#F8F9FA] transition-colors cursor-pointer"
                 >
                   Batal
@@ -6208,7 +6569,7 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                   type="submit"
                   className="px-4 py-2 rounded-md bg-[#0052CC] hover:bg-[#0047B3] text-white text-xs font-bold shadow-xs transition-colors cursor-pointer"
                 >
-                  Buat Bank Soal
+                  {editingBankPackage ? 'Simpan Perubahan' : 'Buat Bank Soal'}
                 </button>
               </div>
             </form>
@@ -6250,6 +6611,46 @@ export const EntityTablePage: React.FC<EntityTablePageProps> = ({
                 className="px-4 py-2 rounded-md bg-[#DC3545] hover:bg-[#C82333] text-white text-xs font-bold shadow-xs transition-colors cursor-pointer"
               >
                 Hapus Bank Soal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Clean Demo Data Confirmation Modal */}
+      {cleanDemoConfirmOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl border border-[#DEE2E6] space-y-4">
+            <div className="w-10 h-10 rounded-full bg-[#E8F0FE] text-[#0052CC] flex items-center justify-center">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-[#1A1C1E]">
+                Bersihkan Paket Demo Bawaan?
+              </h3>
+              <p className="text-xs text-[#495057] mt-2 leading-relaxed">
+                Fitur ini akan membersihkan paket demo contoh (seperti Bahasa Indonesia / Matematika demo lama) dan memastikan <b>Bank Soal Fisika X</b> Anda tersambung dengan benar ke mata pelajaran <b>Fisika</b> dan kelas <b>X.1</b>.
+              </p>
+              <div className="mt-2.5 p-3 rounded-lg bg-[#F8F9FA] border border-[#DEE2E6] text-[11px] text-[#495057] space-y-1">
+                <p>✓ Menghapus butir dan paket demo bawaan</p>
+                <p>✓ Memulihkan Bank Soal Fisika X ke kurikulum yang tepat</p>
+                <p>✓ Menyelaraskan jumlah butir soal agar siap dijadwalkan ke CBT</p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#DEE2E6]">
+              <button
+                type="button"
+                onClick={() => setCleanDemoConfirmOpen(false)}
+                className="px-4 py-2 rounded-md border border-[#CED4DA] text-[#495057] text-xs font-medium hover:bg-[#F8F9FA] transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleCleanDemoQuestionBanks}
+                className="px-4 py-2 rounded-md bg-[#0052CC] hover:bg-[#0047B3] text-white text-xs font-bold shadow-xs transition-colors cursor-pointer"
+              >
+                Bersihkan & Pulihkan Fisika
               </button>
             </div>
           </div>

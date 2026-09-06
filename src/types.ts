@@ -21,6 +21,8 @@ export interface User {
   ROLE: Role;
   CLASS_ID: string;
   TEACHER_CODE?: string; // Kode Guru (A..T) sesuai Jadwal Pelajaran
+  NIS?: string;
+  NISN?: string;
   ACTIVE: boolean;
   CREATED_AT: string;
 }
@@ -88,11 +90,37 @@ export interface TimetableDay {
   postActivity?: string;
 }
 
+export interface ExamSessionPreset {
+  id: string;
+  name: string; // e.g. "Sesi 1"
+  startTime: string; // "07:30"
+  endTime: string; // "09:00"
+  durationMin: number; // 90
+  description?: string;
+  isDefault?: boolean;
+}
+
+export type AttendanceStatus = 'PRESENT_SCHOOL' | 'REMOTE_PERMIT' | 'ABSENT_SUSULAN';
+
+export interface StudentAttendanceRecord {
+  id: string; // `${userId}_${date}`
+  userId: string;
+  studentName: string;
+  className: string;
+  date: string; // YYYY-MM-DD
+  status: AttendanceStatus;
+  method: 'QR_SCAN' | 'CODE_INPUT' | 'MANUAL_SUPERVISOR' | 'REMOTE_PERMIT';
+  verifiedBy?: string; // e.g. "Pengawas Ruang", "Petugas Piket", "Admin"
+  verifiedAt: string;
+  notes?: string;
+}
+
 export interface Exam {
   ID: string;
   TITLE: string;
   SUBJECT_ID: string;
   CLASS_ID: string;
+  CLASS_IDS?: string[]; // Multi-class targeting
   ASSESSMENT_TYPE_ID?: string; // Link to AssessmentType ID, e.g. 'SAS', 'STS', 'SLM', 'SAP', 'SAJ'
   EXAM_DATE: string;
   START_TIME: string;
@@ -104,13 +132,38 @@ export interface Exam {
   STATUS: ExamStatus;
   RANDOMIZE: boolean;
   MAX_VIOLATIONS: number;
+  USE_TOKEN?: boolean;
+  TOKEN?: string;
+  ATTENDANCE_MODE?: 'STRICT_SCHOOL' | 'ALLOW_REMOTE'; // Default: STRICT_SCHOOL (Wajib di Sekolah)
+  ABSENT_POLICY?: 'AUTO_MAKEUP' | 'ALLOW_WITH_PERMIT'; // Default: AUTO_MAKEUP (Otomatis Masuk Susulan jika tidak hadir)
+  TARGET_QUESTION_COUNT?: number; // Target jumlah butir soal pada Bank Soal
+  QUESTION_BANK_ID?: string; // Tautan ke ID Bank Soal sumber
+  QUESTION_SELECTION_MODE?: 'ALL' | 'RANDOM' | 'MANUAL'; // Mode penarikan soal dari bank: semua, acak N soal, atau pilih manual
+  QUESTION_COUNT?: number; // Kuota butir soal yang diujikan (misal 50 butir dari 100 soal di bank)
+  SELECTED_QUESTION_IDS?: string[]; // Daftar ID butir soal yang dipilih spesifik jika mode MANUAL
+  IS_BANK_PACKAGE?: boolean; // Penanda apakah entitas ini adalah murni paket Bank Soal
   CREATED_BY: string;
   CREATED_AT: string;
+}
+
+export interface QuestionBankPackage {
+  ID: string;
+  TITLE: string;
+  SUBJECT_ID: string;
+  CLASS_ID?: string;
+  CLASS_IDS?: string[];
+  ASSESSMENT_TYPE_ID?: string;
+  TARGET_QUESTION_COUNT?: number;
+  DESCRIPTION?: string;
+  CREATED_BY?: string;
+  CREATED_AT?: string;
 }
 
 export interface Question {
   ID: string;
   EXAM_ID: string;
+  BANK_ID?: string;
+  SUBJECT_ID?: string;
   ASSESSMENT_TYPE_ID?: string; // Direct link or derived from Exam
   TYPE: QuestionType;
   QUESTION: string;
@@ -122,6 +175,7 @@ export interface Question {
   ANSWER: string;
   POINTS: number;
   EXTRA_DATA?: string;
+  CREATED_BY?: string;
 }
 
 export interface Attempt {
@@ -197,6 +251,7 @@ export interface RecentExamItem {
 export interface DashboardData {
   stats: DashboardStats;
   recentExams: RecentExamItem[];
+  studentSchedules?: AvailableExamItem[];
   charts: {
     classDistribution: [string, number][];
     subjectExamCount: [string, number][];
@@ -207,14 +262,32 @@ export interface AvailableExamItem {
   id: string;
   title: string;
   subject: string;
+  subjectCode?: string;
   className: string;
   date: string;
+  startTime?: string;
+  endTime?: string;
+  room?: string;
+  session?: string;
   duration: number;
   status: string;
   attemptId: string;
   score: number | string;
   canStart: boolean;
   isToday: boolean;
+  isStarted?: boolean;
+  timingStatus?: 'STARTED' | 'UPCOMING' | 'EXPIRED';
+  timingMessage?: string;
+  totalQuestions?: number;
+  useToken?: boolean;
+  token?: string;
+  supervisor?: string;
+  attendanceMode?: 'STRICT_SCHOOL' | 'ALLOW_REMOTE';
+  absentPolicy?: 'AUTO_MAKEUP' | 'ALLOW_WITH_PERMIT';
+  isSchoolPresent?: boolean;
+  presenceStatus?: AttendanceStatus;
+  presenceBlocked?: boolean;
+  isMakeupExam?: boolean;
 }
 
 export interface LiveMonitoringItem {

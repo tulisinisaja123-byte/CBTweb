@@ -16,7 +16,10 @@ import {
   TimetableDay,
   User,
   TeacherMasterItem,
-  TeacherAssignmentRow
+  TeacherAssignmentRow,
+  AttendanceStatus,
+  ExamSessionPreset,
+  StudentAttendanceRecord
 } from '../types';
 import { parseMatchingAnswer } from '../utils/matchingHelper';
 import {
@@ -42,6 +45,17 @@ import {
   getTeacherLetterFromCode
 } from '../data/curriculumData';
 import * as localStore from './lmsStorage';
+import {
+  addDiagnosticLog,
+  getDiagnosticLogs,
+  clearDiagnosticLogs,
+  subscribeToDiagnosticLogs,
+  fetchRawSupabaseExams,
+  hardDeleteRawSupabaseExam,
+  purgeStaleSupabaseExams,
+  testSupabaseExamDeletePermissions,
+  type DiagnosticLogEntry
+} from './supabaseDiagnosticLogger';
 
 // Re-export storage helper primitives
 export {
@@ -53,6 +67,126 @@ export {
   isSubjectTaughtByTeacher,
   isClassTaughtByTeacher
 } from './lmsStorage';
+
+// Re-export diagnostic logging primitives & raw inspection tools
+export {
+  addDiagnosticLog,
+  getDiagnosticLogs,
+  clearDiagnosticLogs,
+  subscribeToDiagnosticLogs,
+  fetchRawSupabaseExams,
+  hardDeleteRawSupabaseExam,
+  purgeStaleSupabaseExams,
+  testSupabaseExamDeletePermissions,
+  type DiagnosticLogEntry
+};
+
+/**
+ * Mapper Supabase <-> Aplikasi untuk Exam dan Attempt
+ * Memastikan data ekstensi (ROOM, SESSION, SUPERVISOR, USE_TOKEN, TOKEN, ANSWERS_JSON) tersimpan rapi
+ */
+export function mapExamToSupabase(exam: any) {
+  return {
+    ID: exam.ID,
+    TITLE: exam.TITLE,
+    SUBJECT_ID: exam.SUBJECT_ID,
+    CLASS_ID: exam.CLASS_ID || 'ALL',
+    ASSESSMENT_TYPE_ID: exam.ASSESSMENT_TYPE_ID || 'SAS',
+    DURATION_MIN: Number(exam.DURATION_MIN || 90),
+    EXAM_DATE: exam.EXAM_DATE || new Date().toISOString().slice(0, 10),
+    START_TIME: exam.START_TIME || '07:30',
+    END_TIME: exam.END_TIME || '',
+    MAX_VIOLATIONS: Number(exam.MAX_VIOLATIONS || 3),
+    RANDOMIZE: exam.RANDOMIZE !== false,
+    STATUS: exam.STATUS || 'ACTIVE',
+    CREATED_BY: exam.CREATED_BY || 'ADMIN',
+    CREATED_AT: exam.CREATED_AT || new Date().toISOString(),
+    data: {
+      ROOM: exam.ROOM || 'Ruang 01',
+      SESSION: exam.SESSION || 'Sesi 1',
+      SUPERVISOR: exam.SUPERVISOR || '',
+      USE_TOKEN: Boolean(exam.USE_TOKEN),
+      TOKEN: exam.USE_TOKEN ? String(exam.TOKEN || '').trim().toUpperCase() : '',
+      CLASS_IDS: Array.isArray(exam.CLASS_IDS) ? exam.CLASS_IDS : undefined,
+      TARGET_QUESTION_COUNT: exam.TARGET_QUESTION_COUNT !== undefined ? Number(exam.TARGET_QUESTION_COUNT) : undefined,
+      ATTENDANCE_MODE: exam.ATTENDANCE_MODE || 'STRICT_SCHOOL',
+      ABSENT_POLICY: exam.ABSENT_POLICY || 'AUTO_MAKEUP'
+    }
+  };
+}
+
+export function mapExamFromSupabase(row: any): Exam {
+  const extra = row?.data && typeof row.data === 'object'
+    ? row.data
+    : (typeof row?.data === 'string' ? (() => { try { return JSON.parse(row.data); } catch { return {}; } })() : {});
+  return {
+    ID: row.ID || row.id,
+    TITLE: row.TITLE || row.title || extra.TITLE || '',
+    SUBJECT_ID: row.SUBJECT_ID || row.subject_id || extra.SUBJECT_ID || '',
+    CLASS_ID: row.CLASS_ID || row.class_id || extra.CLASS_ID || 'ALL',
+    CLASS_IDS: row.CLASS_IDS || extra.CLASS_IDS || (row.CLASS_ID && row.CLASS_ID !== 'ALL' ? [row.CLASS_ID] : []),
+    TARGET_QUESTION_COUNT: row.TARGET_QUESTION_COUNT !== undefined ? Number(row.TARGET_QUESTION_COUNT) : (extra.TARGET_QUESTION_COUNT !== undefined ? Number(extra.TARGET_QUESTION_COUNT) : undefined),
+    ATTENDANCE_MODE: row.ATTENDANCE_MODE || extra.ATTENDANCE_MODE || 'STRICT_SCHOOL',
+    ABSENT_POLICY: row.ABSENT_POLICY || extra.ABSENT_POLICY || 'AUTO_MAKEUP',
+    ASSESSMENT_TYPE_ID: row.ASSESSMENT_TYPE_ID || row.assessment_type_id || extra.ASSESSMENT_TYPE_ID || 'SAS',
+    DURATION_MIN: Number(row.DURATION_MIN || row.duration_min || row.DURATION || extra.DURATION_MIN || 90),
+    EXAM_DATE: row.EXAM_DATE || row.exam_date || extra.EXAM_DATE || '',
+    START_TIME: row.START_TIME || row.start_time || extra.START_TIME || '07:30',
+    END_TIME: row.END_TIME || row.end_time || extra.END_TIME || '',
+    ROOM: extra.ROOM || row.ROOM || 'Ruang 01',
+    SESSION: extra.SESSION || row.SESSION || 'Sesi 1',
+    SUPERVISOR: extra.SUPERVISOR || row.SUPERVISOR || '',
+    STATUS: row.STATUS || row.status || extra.STATUS || 'ACTIVE',
+    RANDOMIZE: row.RANDOMIZE !== undefined ? Boolean(row.RANDOMIZE) : (extra.RANDOMIZE !== false),
+    MAX_VIOLATIONS: Number(row.MAX_VIOLATIONS || row.max_violations || extra.MAX_VIOLATIONS || 3),
+    USE_TOKEN: extra.USE_TOKEN !== undefined ? Boolean(extra.USE_TOKEN) : Boolean(row.USE_TOKEN),
+    TOKEN: extra.TOKEN || row.TOKEN || '',
+    CREATED_BY: row.CREATED_BY || row.created_by || extra.CREATED_BY || 'ADMIN',
+    CREATED_AT: row.CREATED_AT || row.created_at || extra.CREATED_AT || new Date().toISOString()
+  };
+}
+
+export function mapAttemptToSupabase(attempt: any) {
+  return {
+    ID: attempt.ID,
+    EXAM_ID: attempt.EXAM_ID,
+    STUDENT_ID: attempt.USER_ID,
+    STATUS: attempt.STATUS || 'IN_PROGRESS',
+    SCORE: attempt.SCORE !== '' && attempt.SCORE !== undefined ? attempt.SCORE : null,
+    STARTED_AT: attempt.STARTED_AT || new Date().toISOString(),
+    SUBMITTED_AT: attempt.SUBMITTED_AT || null,
+    data: {
+      USER_ID: attempt.USER_ID,
+      MAX_SCORE: attempt.MAX_SCORE || 100,
+      VIOLATIONS: Number(attempt.VIOLATIONS || 0),
+      PROGRESS: Number(attempt.PROGRESS || 0),
+      ANSWERS_JSON: typeof attempt.ANSWERS_JSON === 'string' ? attempt.ANSWERS_JSON : JSON.stringify(attempt.ANSWERS_JSON || {}),
+      ESSAY_SCORES_JSON: typeof attempt.ESSAY_SCORES_JSON === 'string' ? attempt.ESSAY_SCORES_JSON : JSON.stringify(attempt.ESSAY_SCORES_JSON || {}),
+      LAST_ACTIVITY: attempt.LAST_ACTIVITY || new Date().toISOString()
+    }
+  };
+}
+
+export function mapAttemptFromSupabase(row: any): Attempt {
+  const extra = row?.data && typeof row.data === 'object'
+    ? row.data
+    : (typeof row?.data === 'string' ? (() => { try { return JSON.parse(row.data); } catch { return {}; } })() : {});
+  return {
+    ID: row.ID || row.id,
+    EXAM_ID: row.EXAM_ID || row.exam_id,
+    USER_ID: row.STUDENT_ID || row.student_id || row.USER_ID || extra.USER_ID || '',
+    STARTED_AT: row.STARTED_AT || row.started_at || '',
+    SUBMITTED_AT: row.SUBMITTED_AT || row.submitted_at || extra.SUBMITTED_AT || '',
+    SCORE: row.SCORE !== null && row.SCORE !== undefined ? row.SCORE : (extra.SCORE ?? ''),
+    MAX_SCORE: Number(extra.MAX_SCORE || 100),
+    STATUS: row.STATUS || row.status || extra.STATUS || 'IN_PROGRESS',
+    VIOLATIONS: Number(extra.VIOLATIONS || 0),
+    PROGRESS: Number(extra.PROGRESS || 0),
+    ANSWERS_JSON: extra.ANSWERS_JSON || (typeof row.ANSWERS === 'string' ? row.ANSWERS : JSON.stringify(row.ANSWERS || {})),
+    ESSAY_SCORES_JSON: extra.ESSAY_SCORES_JSON || '{}',
+    LAST_ACTIVITY: extra.LAST_ACTIVITY || row.LAST_ACTIVITY || new Date().toISOString()
+  };
+}
 
 /**
  * Daftar Nama Tabel di Database Supabase
@@ -86,16 +220,32 @@ export function subscribeToRealtimeChanges(
     callback({ eventType: 'ALL', new: key });
   });
 
+  const handleCustomDataChange = (e: any) => {
+    callback({ eventType: 'ALL', new: e.detail });
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('cbt:datachange', handleCustomDataChange);
+  }
+
   if (!isSupabaseConfigured) {
-    return unsubLocal;
+    return () => {
+      unsubLocal();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('cbt:datachange', handleCustomDataChange);
+      }
+    };
   }
 
   try {
+    const channelConfig = tableName && tableName !== 'ALL'
+      ? { event: '*', schema: 'public', table: tableName }
+      : { event: '*', schema: 'public' };
+
     const channel = supabase
       .channel(`public:${tableName}_${Date.now()}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: tableName },
+        channelConfig as any,
         (payload: any) => {
           callback({
             eventType: payload.eventType,
@@ -108,11 +258,19 @@ export function subscribeToRealtimeChanges(
 
     return () => {
       unsubLocal();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('cbt:datachange', handleCustomDataChange);
+      }
       supabase.removeChannel(channel);
     };
   } catch (err) {
     console.warn('Supabase realtime channel error, using local channel fallback:', err);
-    return unsubLocal;
+    return () => {
+      unsubLocal();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('cbt:datachange', handleCustomDataChange);
+      }
+    };
   }
 }
 
@@ -177,13 +335,15 @@ export async function ensureInitialized(forceDemo = false): Promise<void> {
       return;
     }
 
+    const isQuestionsUserModified = localStore.safeStorageGet('LMS_QUESTIONS_USER_MODIFIED') === 'true';
+    const currentLocalQuestions = localStore.getStorage<any[]>(localStore.STORAGE_KEYS.QUESTIONS, []);
+
     if (count === 0 || forceDemo) {
-      await Promise.allSettled([
+      const initTasks = [
         supabase.from(SUPABASE_TABLES.USERS).upsert(INITIAL_USERS),
         supabase.from(SUPABASE_TABLES.CLASSES).upsert(INITIAL_CLASSES),
         supabase.from(SUPABASE_TABLES.SUBJECTS).upsert(INITIAL_SUBJECTS),
         supabase.from(SUPABASE_TABLES.EXAMS).upsert(INITIAL_EXAMS),
-        supabase.from(SUPABASE_TABLES.QUESTIONS).upsert(INITIAL_QUESTIONS),
         supabase.from(SUPABASE_TABLES.ASSESSMENT_TYPES).upsert(INITIAL_ASSESSMENT_TYPES),
         supabase.from(SUPABASE_TABLES.SETTINGS).upsert({ id: 'current', ...DEFAULT_SETTINGS }),
         supabase.from(SUPABASE_TABLES.TIMETABLE).upsert(
@@ -193,7 +353,45 @@ export async function ensureInitialized(forceDemo = false): Promise<void> {
           MA_CIKARAMAS_TEACHERS.map(t => ({ id: t.code, ...t }))
         ),
         supabase.from(SUPABASE_TABLES.TEACHER_ASSIGNMENTS).upsert(generateDefaultTeacherAssignments())
-      ]);
+      ];
+      if (!isQuestionsUserModified && currentLocalQuestions.length === 0) {
+        initTasks.push(supabase.from(SUPABASE_TABLES.QUESTIONS).upsert(INITIAL_QUESTIONS));
+      }
+      await Promise.allSettled(initTasks);
+    } else {
+      // Sinkronisasi data terkini dari Supabase ke localStore agar state lokal selalu sesuai dengan cloud database
+      try {
+        const [cloudExamsRes, cloudUsersRes, cloudClassesRes, cloudSubjectsRes, cloudTypesRes] = await Promise.allSettled([
+          supabase.from(SUPABASE_TABLES.EXAMS).select('*'),
+          supabase.from(SUPABASE_TABLES.USERS).select('*'),
+          supabase.from(SUPABASE_TABLES.CLASSES).select('*'),
+          supabase.from(SUPABASE_TABLES.SUBJECTS).select('*'),
+          supabase.from(SUPABASE_TABLES.ASSESSMENT_TYPES).select('*')
+        ]);
+
+        if (cloudExamsRes.status === 'fulfilled' && cloudExamsRes.value.data && cloudExamsRes.value.data.length > 0) {
+          const mappedExams = cloudExamsRes.value.data.map(mapExamFromSupabase);
+          localStore.setStorage(localStore.STORAGE_KEYS.EXAMS, mappedExams);
+          localStore.safeStorageSet('LMS_EXAMS_USER_MODIFIED', 'true');
+        }
+        if (cloudUsersRes.status === 'fulfilled' && cloudUsersRes.value.data && cloudUsersRes.value.data.length > 0) {
+          const mappedUsers = cloudUsersRes.value.data.map(sanitizeUser);
+          localStore.setStorage(localStore.STORAGE_KEYS.USERS, mappedUsers);
+          localStore.safeStorageSet('LMS_USERS_USER_MODIFIED', 'true');
+        }
+        if (cloudClassesRes.status === 'fulfilled' && cloudClassesRes.value.data && cloudClassesRes.value.data.length > 0) {
+          localStore.setStorage(localStore.STORAGE_KEYS.CLASSES, cloudClassesRes.value.data);
+          localStore.safeStorageSet('LMS_CLASSES_USER_MODIFIED', 'true');
+        }
+        if (cloudSubjectsRes.status === 'fulfilled' && cloudSubjectsRes.value.data && cloudSubjectsRes.value.data.length > 0) {
+          localStore.setStorage(localStore.STORAGE_KEYS.SUBJECTS, cloudSubjectsRes.value.data);
+        }
+        if (cloudTypesRes.status === 'fulfilled' && cloudTypesRes.value.data && cloudTypesRes.value.data.length > 0) {
+          localStore.setStorage(localStore.STORAGE_KEYS.ASSESSMENT_TYPES, cloudTypesRes.value.data);
+        }
+      } catch (syncErr) {
+        console.warn('Sync from Supabase to localStore warning:', syncErr);
+      }
     }
   } catch (err) {
     console.warn('ensureInitialized Supabase error:', err);
@@ -415,12 +613,12 @@ export async function getDashboardDataForUser(user: User): Promise<DashboardData
       ]);
 
       if (users && classes && subjects && exams && attempts) {
-        const allUsers: User[] = users;
+        const allUsers: User[] = users.map(sanitizeUser);
         const allClasses: ClassItem[] = classes;
         const allSubjects: Subject[] = subjects;
-        const allExams: Exam[] = exams;
+        const allExams: Exam[] = exams.map(mapExamFromSupabase);
         const allQuestions: Question[] = questions || [];
-        const allAttempts: Attempt[] = attempts;
+        const allAttempts: Attempt[] = attempts.map(mapAttemptFromSupabase);
 
         const students = allUsers.filter(u => u.ROLE === 'STUDENT' && u.ACTIVE);
         const teachers = allUsers.filter(u => u.ROLE === 'TEACHER' && u.ACTIVE);
@@ -432,15 +630,23 @@ export async function getDashboardDataForUser(user: User): Promise<DashboardData
 
         if (user.ROLE === 'STUDENT') {
           visibleClasses = allClasses.filter(c => c.ID === user.CLASS_ID);
-          visibleExams = allExams.filter(e => e.CLASS_ID === user.CLASS_ID);
+          visibleExams = allExams.filter(
+            e =>
+              e.CLASS_ID === 'ALL' ||
+              !e.CLASS_ID ||
+              e.CLASS_ID === user.CLASS_ID ||
+              (Array.isArray(e.CLASS_IDS) && e.CLASS_IDS.includes(user.CLASS_ID))
+          );
         } else if (user.ROLE === 'TEACHER') {
-          visibleExams = allExams.filter(e => e.CREATED_BY === user.ID);
+          visibleExams = allExams.filter(e => !e.CREATED_BY || e.CREATED_BY === user.ID || e.CREATED_BY === 'ADMIN');
           const examIds = new Set(visibleExams.map(e => e.ID));
           visibleQuestions = allQuestions.filter(q => examIds.has(q.EXAM_ID));
         }
 
         const subjectMap = Object.fromEntries(allSubjects.map(s => [s.ID, s.NAME]));
+        const subjectCodes = Object.fromEntries(allSubjects.map(s => [s.ID, s.CODE]));
         const classMap = Object.fromEntries(allClasses.map(c => [c.ID, c.NAME]));
+        const todayStr = new Date().toISOString().slice(0, 10);
 
         const recentExams = visibleExams
           .slice()
@@ -473,10 +679,71 @@ export async function getDashboardDataForUser(user: User): Promise<DashboardData
           .filter(x => x[1] > 0);
 
         const myAttempts = allAttempts.filter(a => a.USER_ID === user.ID);
-        const myAvailable = allExams.filter(e =>
-          (user.ROLE !== 'STUDENT' || e.CLASS_ID === user.CLASS_ID) &&
-          ['SCHEDULED', 'ACTIVE'].includes(e.STATUS)
-        );
+        const classMapObj = new Map(allClasses.map(c => [c.ID, c.NAME]));
+        const myAvailable = allExams.filter(e => {
+          if (user.ROLE === 'STUDENT') {
+            const matchesClass =
+              e.CLASS_ID === 'ALL' ||
+              localStore.matchClassFlexible(user.CLASS_ID, e.CLASS_ID, classMapObj) ||
+              (Array.isArray(e.CLASS_IDS) && e.CLASS_IDS.some(cid => localStore.matchClassFlexible(user.CLASS_ID, cid, classMapObj)));
+            if (!matchesClass) return false;
+          }
+          return ['SCHEDULED', 'ACTIVE'].includes(e.STATUS);
+        });
+
+        const studentSchedules = user.ROLE === 'STUDENT'
+          ? allExams
+              .filter(exam => {
+                const matchesClass =
+                  exam.CLASS_ID === 'ALL' ||
+                  localStore.matchClassFlexible(user.CLASS_ID, exam.CLASS_ID, classMapObj) ||
+                  (Array.isArray(exam.CLASS_IDS) && exam.CLASS_IDS.some(cid => localStore.matchClassFlexible(user.CLASS_ID, cid, classMapObj)));
+                if (!matchesClass) return false;
+                return ['SCHEDULED', 'ACTIVE'].includes(exam.STATUS);
+              })
+              .map(exam => {
+                const attempt = allAttempts.find(a => a.EXAM_ID === exam.ID && a.USER_ID === user.ID);
+                const timing = localStore.getExamTimingInfo(exam);
+                const isAlreadyInProgress = attempt && attempt.STATUS === 'IN_PROGRESS';
+                const isSubmitted = attempt && (attempt.STATUS === 'SUBMITTED' || attempt.STATUS === 'REVIEW');
+                const canStart = !isSubmitted && (timing.isStarted || Boolean(isAlreadyInProgress));
+                const questionCount = allQuestions.filter(q => q.EXAM_ID === exam.ID).length;
+
+                return {
+                  id: exam.ID,
+                  title: exam.TITLE,
+                  subject: subjectMap[exam.SUBJECT_ID] || '-',
+                  subjectCode: subjectCodes[exam.SUBJECT_ID] || '',
+                  className: classMap[exam.CLASS_ID] || '-',
+                  date: exam.EXAM_DATE,
+                  startTime: exam.START_TIME || '07:30',
+                  endTime: exam.END_TIME || '',
+                  room: exam.ROOM || '',
+                  session: exam.SESSION || '',
+                  duration: Number(exam.DURATION_MIN || 60),
+                  status: attempt ? attempt.STATUS : exam.STATUS,
+                  attemptId: attempt ? attempt.ID : '',
+                  score: attempt ? attempt.SCORE : '',
+                  canStart,
+                  isToday: exam.EXAM_DATE === todayStr,
+                  isStarted: timing.isStarted,
+                  timingStatus: timing.timingStatus,
+                  timingMessage: timing.timingMessage,
+                  totalQuestions: questionCount,
+                  useToken: Boolean(exam.USE_TOKEN),
+                  token: exam.TOKEN || '',
+                  supervisor: exam.SUPERVISOR || ''
+                };
+              })
+              .sort((a, b) => {
+                const dateA = a.date || '9999-99-99';
+                const dateB = b.date || '9999-99-99';
+                if (dateA !== dateB) return dateA.localeCompare(dateB);
+                const timeA = a.startTime || '00:00';
+                const timeB = b.startTime || '00:00';
+                return timeA.localeCompare(timeB);
+              })
+          : undefined;
 
         return {
           stats: {
@@ -490,6 +757,7 @@ export async function getDashboardDataForUser(user: User): Promise<DashboardData
             myCompletedExams: myAttempts.filter(a => a.STATUS === 'SUBMITTED' || a.STATUS === 'REVIEW').length
           },
           recentExams,
+          studentSchedules,
           charts: {
             classDistribution,
             subjectExamCount: subjectExamCount.length ? subjectExamCount : [['Belum ada ujian', 0]]
@@ -531,6 +799,7 @@ export async function getLookupData(token?: string) {
       ]);
 
       if (users && classes && subjects && exams) {
+        const mappedExams = exams.map(mapExamFromSupabase);
         return {
           users: users.map(sanitizeUser),
           allUsers: users.map(sanitizeUser),
@@ -538,9 +807,10 @@ export async function getLookupData(token?: string) {
           allClasses: classes,
           subjects,
           allSubjects: subjects,
-          exams,
-          allExams: exams,
-          assessmentTypes: assessmentTypes || INITIAL_ASSESSMENT_TYPES
+          exams: mappedExams,
+          allExams: mappedExams,
+          assessmentTypes: assessmentTypes || INITIAL_ASSESSMENT_TYPES,
+          questionBanks: localStore.getQuestionBanks()
         };
       }
     } catch (err) {
@@ -575,11 +845,11 @@ export async function listEntity(token: string, entity: string): Promise<any[]> 
       let query = supabase.from(targetTable).select('*');
 
       if (auth.user.ROLE === 'STUDENT') {
-        if (ent === 'EXAMS') query = query.eq('CLASS_ID', auth.user.CLASS_ID);
-        else if (ent === 'ATTEMPTS') query = query.eq('USER_ID', auth.user.ID);
+        if (ent === 'EXAMS') query = query.or(`CLASS_ID.eq.${auth.user.CLASS_ID},CLASS_ID.eq.ALL`);
+        else if (ent === 'ATTEMPTS') query = query.or(`STUDENT_ID.eq.${auth.user.ID},USER_ID.eq.${auth.user.ID}`);
         else if (ent === 'ASSESSMENT_TYPES') query = query.eq('ACTIVE', true);
       } else if (auth.user.ROLE === 'TEACHER') {
-        if (ent === 'EXAMS') query = query.eq('CREATED_BY', auth.user.ID);
+        if (ent === 'EXAMS') query = query.or(`CREATED_BY.eq.${auth.user.ID},CREATED_BY.eq.ADMIN`);
       }
 
       const { data, error } = await query;
@@ -587,6 +857,10 @@ export async function listEntity(token: string, entity: string): Promise<any[]> 
         let rows = data;
         if (ent === 'USERS') {
           rows = rows.map(sanitizeUser);
+        } else if (ent === 'EXAMS') {
+          rows = rows.map(mapExamFromSupabase);
+        } else if (ent === 'ATTEMPTS') {
+          rows = rows.map(mapAttemptFromSupabase);
         }
         return rows;
       }
@@ -615,8 +889,12 @@ export async function saveEntity(token: string, entity: string, payload: any): P
     SUBJECTS: SUPABASE_TABLES.SUBJECTS,
     EXAMS: SUPABASE_TABLES.EXAMS,
     QUESTIONS: SUPABASE_TABLES.QUESTIONS,
-    ASSESSMENT_TYPES: SUPABASE_TABLES.ASSESSMENT_TYPES
+    ASSESSMENT_TYPES: SUPABASE_TABLES.ASSESSMENT_TYPES,
+    ATTEMPTS: SUPABASE_TABLES.ATTEMPTS
   };
+
+  // Sync to local store first
+  const localRes = localStore.saveEntity(token, entity, payload);
 
   const targetTable = tableMap[ent];
   if (isSupabaseConfigured && targetTable) {
@@ -627,11 +905,12 @@ export async function saveEntity(token: string, entity: string, payload: any): P
         SUBJECTS: 'MP',
         EXAMS: 'UJ',
         QUESTIONS: 'SOAL',
-        ASSESSMENT_TYPES: 'AT'
+        ASSESSMENT_TYPES: 'AT',
+        ATTEMPTS: 'ATT'
       };
 
-      const id = payload.ID || `${idPrefix[ent] || 'ID'}-${Date.now().toString(36).toUpperCase()}`;
-      const object = { ...payload, ID: id };
+      const id = payload.ID || localRes.id || `${idPrefix[ent] || 'ID'}-${Date.now().toString(36).toUpperCase()}`;
+      let object = { ...payload, ID: id };
       delete object._originalId;
       delete object._entityType;
 
@@ -642,21 +921,26 @@ export async function saveEntity(token: string, entity: string, payload: any): P
           object.PASSWORD_HASH = object.PASSWORD;
           delete object.PASSWORD;
         }
+      } else if (ent === 'EXAMS') {
+        object = mapExamToSupabase(object);
+      } else if (ent === 'ATTEMPTS') {
+        object = mapAttemptToSupabase(object);
       }
 
       const { error } = await supabase.from(targetTable).upsert(object, { onConflict: 'ID' });
       if (!error) {
         await logActivity(auth.user.ID, `SAVE_${ent}`, id);
-        // Also sync local cache
-        localStore.saveEntity(token, entity, payload);
-        return { success: true, id, message: 'Data berhasil disimpan ke cloud database.' };
       }
     } catch (err) {
       console.warn(`saveEntity ${ent} Supabase error, fallback lokal:`, err);
     }
   }
 
-  return localStore.saveEntity(token, entity, payload);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('cbt:datachange', { detail: { entity: ent, id: localRes.id } }));
+  }
+
+  return localRes;
 }
 
 /**
@@ -675,27 +959,59 @@ export async function deleteEntity(token: string, entity: string, id: string): P
     SUBJECTS: SUPABASE_TABLES.SUBJECTS,
     EXAMS: SUPABASE_TABLES.EXAMS,
     QUESTIONS: SUPABASE_TABLES.QUESTIONS,
-    ASSESSMENT_TYPES: SUPABASE_TABLES.ASSESSMENT_TYPES
+    ASSESSMENT_TYPES: SUPABASE_TABLES.ASSESSMENT_TYPES,
+    ATTEMPTS: SUPABASE_TABLES.ATTEMPTS
   };
 
+  // 1. Delete from local storage immediately to eliminate race conditions
+  const localRes = localStore.deleteEntity(token, entity, id);
+
+  // 2. Delete from cloud database
   const targetTable = tableMap[ent];
   if (isSupabaseConfigured && targetTable) {
     try {
-      const { error } = await supabase.from(targetTable).delete().eq('ID', id);
-      if (!error) {
-        if (ent === 'EXAMS') {
-          await supabase.from(SUPABASE_TABLES.QUESTIONS).delete().eq('EXAM_ID', id);
-        }
-        await logActivity(auth.user.ID, `DELETE_${ent}`, id);
-        localStore.deleteEntity(token, entity, id);
-        return { success: true, message: 'Data berhasil dihapus dari cloud database.' };
+      if (ent === 'EXAMS') {
+        await supabase.from(SUPABASE_TABLES.ATTEMPTS).delete().or(`EXAM_ID.eq.${id},exam_id.eq.${id}`);
+        // CATATAN INTEGRITAS DATA: Butir Bank Soal TIDAK BOLEH dihapus ketika jadwal ujian dihapus.
+        // Bank soal bersifat persisten dan dapat digunakan kembali untuk penilaian atau jadwal ujian lainnya.
       }
-    } catch (err) {
+
+      let res = await supabase.from(targetTable).delete().eq('ID', id).select();
+      if ((!res.data || res.data.length === 0) && !res.error) {
+        const fallback = await supabase.from(targetTable).delete().eq('id', id).select();
+        if (fallback.data && fallback.data.length > 0) res = fallback;
+      }
+
+      if (res.error) {
+        addDiagnosticLog('ERROR', 'DELETE', `Supabase menolak DELETE untuk ${ent} ID '${id}': ${res.error.message}`, {
+          table: targetTable,
+          id,
+          error: res.error
+        });
+      } else if (!res.data || res.data.length === 0) {
+        addDiagnosticLog('WARN', 'DELETE', `Supabase mengembalikan 0 baris terhapus untuk ${ent} ID '${id}'. Data mungkin tidak ada di cloud atau ditolak oleh policy RLS.`, {
+          table: targetTable,
+          id
+        });
+      } else {
+        addDiagnosticLog('SUCCESS', 'DELETE', `Berhasil menghapus ${ent} ID '${id}' dari Supabase (${res.data.length} baris).`, {
+          table: targetTable,
+          id
+        });
+        await logActivity(auth.user.ID, `DELETE_${ent}`, id);
+      }
+    } catch (err: any) {
+      addDiagnosticLog('ERROR', 'DELETE', `Exception saat deleteEntity ${ent} ID '${id}': ${err?.message || String(err)}`, err);
       console.warn(`deleteEntity ${ent} Supabase error, fallback lokal:`, err);
     }
   }
 
-  return localStore.deleteEntity(token, entity, id);
+  // 3. Broadcast to all open views & tabs
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('cbt:datachange', { detail: { entity: ent, id } }));
+  }
+
+  return localRes;
 }
 
 /**
@@ -715,27 +1031,61 @@ export async function deleteEntities(token: string, entity: string, ids: string[
     SUBJECTS: SUPABASE_TABLES.SUBJECTS,
     EXAMS: SUPABASE_TABLES.EXAMS,
     QUESTIONS: SUPABASE_TABLES.QUESTIONS,
-    ASSESSMENT_TYPES: SUPABASE_TABLES.ASSESSMENT_TYPES
+    ASSESSMENT_TYPES: SUPABASE_TABLES.ASSESSMENT_TYPES,
+    ATTEMPTS: SUPABASE_TABLES.ATTEMPTS
   };
 
+  // 1. Delete from local storage immediately
+  const localRes = localStore.deleteEntities(token, entity, ids);
+
+  // 2. Delete from cloud database
   const targetTable = tableMap[ent];
   if (isSupabaseConfigured && targetTable && ids.length > 0) {
     try {
-      const { error } = await supabase.from(targetTable).delete().in('ID', ids);
-      if (!error) {
-        if (ent === 'EXAMS') {
-          await supabase.from(SUPABASE_TABLES.QUESTIONS).delete().in('EXAM_ID', ids);
+      if (ent === 'EXAMS') {
+        await supabase.from(SUPABASE_TABLES.ATTEMPTS).delete().in('EXAM_ID', ids);
+        // CATATAN INTEGRITAS DATA: Butir Bank Soal TIDAK BOLEH dihapus ketika jadwal ujian dihapus.
+        // Bank soal bersifat persisten dan dapat digunakan kembali untuk penilaian atau jadwal ujian lainnya.
+      }
+      let res = await supabase.from(targetTable).delete().in('ID', ids).select();
+      if ((!res.data || res.data.length === 0) && !res.error) {
+        const fallback = await supabase.from(targetTable).delete().in('id', ids).select();
+        if (fallback.data && fallback.data.length > 0) res = fallback;
+      }
+
+      if (res.error) {
+        addDiagnosticLog('ERROR', 'DELETE', `Supabase menolak bulk delete untuk ${ent} (${ids.length} data): ${res.error.message}`, {
+          table: targetTable,
+          ids,
+          error: res.error
+        });
+      } else {
+        const deletedCount = res.data?.length || 0;
+        if (deletedCount < ids.length) {
+          addDiagnosticLog('WARN', 'DELETE', `Sebagian data bulk delete ${ent} tidak terhapus di Supabase: diminta ${ids.length}, terhapus ${deletedCount}. Kemungkinan ditolak RLS policy DELETE.`, {
+            requested: ids.length,
+            deleted: deletedCount
+          });
+        } else {
+          addDiagnosticLog('SUCCESS', 'DELETE', `Berhasil bulk delete ${ent} (${deletedCount} baris) dari Supabase.`, {
+            table: targetTable,
+            deletedCount
+          });
         }
         await logActivity(auth.user.ID, `DELETE_BULK_${ent}`, `${ids.length} data`);
-        localStore.deleteEntities(token, entity, ids);
-        return { success: true, count: ids.length, message: `${ids.length} data berhasil dihapus.` };
       }
-    } catch (err) {
+    } catch (err: any) {
+      addDiagnosticLog('ERROR', 'DELETE', `Exception saat deleteEntities ${ent}: ${err?.message || String(err)}`, err);
       console.warn(`deleteEntities ${ent} Supabase error, fallback lokal:`, err);
     }
   }
 
-  return localStore.deleteEntities(token, entity, ids);
+  // 3. Broadcast to all open views & tabs
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('cbt:datachange', { detail: { entity: ent, ids } }));
+  }
+
+  return localRes;
 }
 
 /**
@@ -766,20 +1116,43 @@ export async function importRows(token: string, entity: string, rawRows: any[], 
 /**
  * Pengerjaan Ujian Siswa (Exam Taker & Anti-Cheat)
  */
-export async function startExam(token: string, examId: string) {
+export async function startExam(token: string, examId: string, tokenInput?: string) {
   const auth = await authorize(token, ['STUDENT']);
 
   if (isSupabaseConfigured) {
     try {
-      const [{ data: exam }, { data: questions }, { data: existingAttempt }] = await Promise.all([
-        supabase.from(SUPABASE_TABLES.EXAMS).select('*').eq('ID', examId).maybeSingle(),
-        supabase.from(SUPABASE_TABLES.QUESTIONS).select('*').eq('EXAM_ID', examId),
+      const { data: exam } = await supabase.from(SUPABASE_TABLES.EXAMS).select('*').eq('ID', examId).maybeSingle();
+      if (!exam) {
+        return localStore.startExam(token, examId, tokenInput);
+      }
+
+      const bankId = exam.QUESTION_BANK_ID || examId;
+      const [{ data: rawQuestions }, { data: existingAttempt }] = await Promise.all([
+        supabase.from(SUPABASE_TABLES.QUESTIONS).select('*').or(`EXAM_ID.eq.${examId},EXAM_ID.eq.${bankId}`),
         supabase.from(SUPABASE_TABLES.ATTEMPTS).select('*').eq('EXAM_ID', examId).eq('USER_ID', auth.user.ID).maybeSingle()
       ]);
 
-      if (exam && questions && questions.length > 0) {
+      let candidateQuestions = localStore.getQuestionsForExam(exam, rawQuestions || [], auth.user.ID);
+      if (!candidateQuestions || candidateQuestions.length === 0) {
+        // Fallback to local storage if questions are synced locally
+        const localQuestions = localStore.getQuestionsForExam(exam, undefined, auth.user.ID);
+        if (localQuestions.length > 0) {
+          candidateQuestions = localQuestions;
+        }
+      }
+
+      if (candidateQuestions && candidateQuestions.length > 0) {
         if (existingAttempt && (existingAttempt.STATUS === 'SUBMITTED' || existingAttempt.STATUS === 'REVIEW')) {
           throw new Error('Anda sudah menyelesaikan ujian ini.');
+        }
+
+        // Validasi token ujian jika ujian memerlukan token dan siswa belum memiliki sesi yang sedang berjalan
+        if (exam.USE_TOKEN && (!existingAttempt || existingAttempt.STATUS !== 'IN_PROGRESS')) {
+          const requiredToken = String(exam.TOKEN || '').trim().toUpperCase();
+          const providedToken = String(tokenInput || '').trim().toUpperCase();
+          if (!requiredToken || providedToken !== requiredToken) {
+            throw new Error('Token ujian tidak valid. Silakan periksa kembali token dari pengawas.');
+          }
         }
 
         let attempt = existingAttempt;
@@ -791,7 +1164,7 @@ export async function startExam(token: string, examId: string) {
             STARTED_AT: new Date().toISOString(),
             SUBMITTED_AT: '',
             SCORE: '',
-            MAX_SCORE: questions.reduce((sum: number, q: any) => sum + Number(q.POINTS || 1), 0),
+            MAX_SCORE: candidateQuestions.reduce((sum: number, q: any) => sum + Number(q.POINTS || 1), 0),
             STATUS: 'IN_PROGRESS',
             VIOLATIONS: 0,
             PROGRESS: 0,
@@ -804,7 +1177,12 @@ export async function startExam(token: string, examId: string) {
           attempt = newAttempt;
         }
 
-        const safeQuestions = questions.map((q: any, idx: number) => ({
+        let orderedQuestions = candidateQuestions.slice();
+        if (exam.RANDOMIZE) {
+          orderedQuestions = localStore.seededShuffle(orderedQuestions, `${auth.user.ID}_${examId}_seq`);
+        }
+
+        const safeQuestions = orderedQuestions.map((q: any, idx: number) => ({
           id: q.ID,
           number: idx + 1,
           type: q.TYPE,
@@ -850,12 +1228,12 @@ export async function startExam(token: string, examId: string) {
         };
       }
     } catch (err: any) {
-      if (err.message.includes('sudah menyelesaikan')) throw err;
+      if (err.message.includes('sudah menyelesaikan') || err.message.includes('Token ujian') || err.message.includes('belum dapat')) throw err;
       console.warn('startExam Supabase error, fallback lokal:', err);
     }
   }
 
-  return localStore.startExam(token, examId);
+  return localStore.startExam(token, examId, tokenInput);
 }
 
 export async function saveExamProgress(
@@ -1019,18 +1397,138 @@ export async function autoSyncTeacherCodes(token: string) {
  */
 export async function getAvailableExams(token: string): Promise<AvailableExamItem[]> {
   const auth = await authorize(token);
+  if (isSupabaseConfigured) {
+    try {
+      const [
+        { data: rawExams },
+        { data: rawAttempts },
+        { data: rawQuestions },
+        { data: rawSubjects },
+        { data: rawClasses }
+      ] = await Promise.all([
+        supabase.from(SUPABASE_TABLES.EXAMS).select('*').in('STATUS', ['SCHEDULED', 'ACTIVE']),
+        supabase.from(SUPABASE_TABLES.ATTEMPTS).select('*').or(`STUDENT_ID.eq.${auth.user.ID},USER_ID.eq.${auth.user.ID}`),
+        supabase.from(SUPABASE_TABLES.QUESTIONS).select('*'),
+        supabase.from(SUPABASE_TABLES.SUBJECTS).select('*'),
+        supabase.from(SUPABASE_TABLES.CLASSES).select('*')
+      ]);
+
+      if (rawExams) {
+        const exams = rawExams.map(mapExamFromSupabase);
+        const attempts = (rawAttempts || []).map(mapAttemptFromSupabase);
+        const questions = rawQuestions || [];
+        const subjects = Object.fromEntries((rawSubjects || []).map(s => [s.ID, s.NAME]));
+        const subjectCodes = Object.fromEntries((rawSubjects || []).map(s => [s.ID, s.CODE]));
+        const classes = Object.fromEntries((rawClasses || []).map(c => [c.ID, c.NAME]));
+        const todayStr = new Date().toISOString().slice(0, 10);
+
+        const classMapObj = new Map((rawClasses || []).map((c: any) => [c.ID, c.NAME]));
+        // Sync ke local store agar sinkron sempurna
+        localStore.setStorage(localStore.STORAGE_KEYS.EXAMS, exams);
+        localStore.safeStorageSet('LMS_EXAMS_USER_MODIFIED', 'true');
+
+        return exams
+          .filter(exam => {
+            if (auth.user.ROLE === 'STUDENT') {
+              const matchesClass =
+                exam.CLASS_ID === 'ALL' ||
+                localStore.matchClassFlexible(auth.user.CLASS_ID, exam.CLASS_ID, classMapObj) ||
+                (Array.isArray(exam.CLASS_IDS) && exam.CLASS_IDS.some((cid: string) => localStore.matchClassFlexible(auth.user.CLASS_ID, cid, classMapObj)));
+              if (!matchesClass) return false;
+            }
+            return ['SCHEDULED', 'ACTIVE'].includes(exam.STATUS);
+          })
+          .map(exam => {
+            const attempt = attempts.find(a => a.EXAM_ID === exam.ID && a.USER_ID === auth.user.ID);
+            const timing = localStore.getExamTimingInfo(exam);
+            const isAlreadyInProgress = attempt && attempt.STATUS === 'IN_PROGRESS';
+            const isSubmitted = attempt && (attempt.STATUS === 'SUBMITTED' || attempt.STATUS === 'REVIEW');
+            const canStart = !isSubmitted && (timing.isStarted || Boolean(isAlreadyInProgress));
+            const questionCount = questions.filter((q: any) => q.EXAM_ID === exam.ID).length;
+
+            return {
+              id: exam.ID,
+              title: exam.TITLE,
+              subject: subjects[exam.SUBJECT_ID] || '-',
+              subjectCode: subjectCodes[exam.SUBJECT_ID] || '',
+              className: classes[exam.CLASS_ID] || '-',
+              date: exam.EXAM_DATE,
+              startTime: exam.START_TIME || '07:30',
+              endTime: exam.END_TIME || '',
+              room: exam.ROOM || '',
+              session: exam.SESSION || '',
+              duration: Number(exam.DURATION_MIN || 60),
+              status: attempt ? attempt.STATUS : exam.STATUS,
+              attemptId: attempt ? attempt.ID : '',
+              score: attempt ? attempt.SCORE : '',
+              canStart,
+              isToday: exam.EXAM_DATE === todayStr,
+              isStarted: timing.isStarted,
+              timingStatus: timing.timingStatus,
+              timingMessage: timing.timingMessage,
+              totalQuestions: questionCount,
+              useToken: Boolean(exam.USE_TOKEN),
+              token: exam.TOKEN || '',
+              supervisor: exam.SUPERVISOR || ''
+            };
+          });
+      }
+    } catch (err) {
+      console.warn('getAvailableExams Supabase error, fallback lokal:', err);
+    }
+  }
+
   return localStore.getAvailableExamsForUser(auth.user);
 }
 
 /**
  * Dokumen Cetak & Kartu Ujian
  */
-export async function getPrintData(token: string, documentType: 'cards' | 'attendance' | 'minutes', examId: string): Promise<PrintData> {
-  return localStore.getPrintData(token, documentType, examId);
+export async function getPrintData(
+  token: string,
+  documentType: 'cards' | 'attendance' | 'minutes',
+  examId: string,
+  options?: any
+): Promise<PrintData> {
+  let finalOptions = { ...options };
+  if (isSupabaseConfigured && (!options?.overrideUsers || options.overrideUsers.length === 0)) {
+    try {
+      const lookup = await getLookupData(token);
+      const settings = await getSchoolSettings();
+      finalOptions = {
+        ...finalOptions,
+        overrideUsers: lookup.allUsers || lookup.users,
+        overrideClasses: lookup.allClasses || lookup.classes,
+        overrideSubjects: lookup.allSubjects || lookup.subjects,
+        overrideExams: lookup.allExams || lookup.exams,
+        overrideSettings: settings
+      };
+    } catch (err) {
+      console.warn('Failed to fetch lookup for printData from Supabase:', err);
+    }
+  }
+  return localStore.getPrintData(token, documentType, examId, finalOptions);
 }
 
 export async function getStudentCardsPrintData(token: string, options: any = {}): Promise<PrintData> {
-  return localStore.getStudentCardsPrintData(token, options);
+  let finalOptions = { ...options };
+  if (isSupabaseConfigured && (!options?.overrideUsers || options.overrideUsers.length === 0)) {
+    try {
+      const lookup = await getLookupData(token);
+      const settings = await getSchoolSettings();
+      finalOptions = {
+        ...finalOptions,
+        overrideUsers: lookup.allUsers || lookup.users,
+        overrideClasses: lookup.allClasses || lookup.classes,
+        overrideSubjects: lookup.allSubjects || lookup.subjects,
+        overrideExams: lookup.allExams || lookup.exams,
+        overrideSettings: settings
+      };
+    } catch (err) {
+      console.warn('Failed to fetch lookup for cards printData from Supabase:', err);
+    }
+  }
+  return localStore.getStudentCardsPrintData(token, finalOptions);
 }
 
 /**
@@ -1058,3 +1556,180 @@ export async function changePassword(token: string, oldPass: string, newPass: st
   }
   return localStore.changePassword(token, oldPass, newPass);
 }
+
+/**
+ * Simpan Banyak Jadwal Ujian Sekaligus (Bulk Save)
+ */
+export async function bulkSaveExams(token: string, newExams: Exam[]): Promise<Exam[]> {
+  const auth = await authorize(token, ['ADMIN', 'TEACHER']);
+  const localSaved = localStore.bulkSaveExams(token, newExams);
+  if (isSupabaseConfigured && newExams.length > 0) {
+    try {
+      const mapped = newExams.map(mapExamToSupabase);
+      const { error } = await supabase.from(SUPABASE_TABLES.EXAMS).upsert(mapped, { onConflict: 'ID' });
+      if (!error) {
+        await logActivity(auth.user.ID, 'BULK_SAVE_EXAMS', `${newExams.length} jadwal ujian`);
+      }
+    } catch (err) {
+      console.warn('bulkSaveExams Supabase error, fallback local:', err);
+    }
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('cbt:datachange', { detail: { entity: 'EXAMS', count: newExams.length } }));
+  }
+  return localSaved;
+}
+
+/**
+ * Simpan Banyak Butir Soal Sekaligus (Bulk Save Questions)
+ */
+export async function bulkSaveQuestions(token: string, newQuestions: Question[]): Promise<Question[]> {
+  const auth = await authorize(token, ['ADMIN', 'TEACHER']);
+  const localSaved = localStore.bulkSaveQuestions(token, newQuestions);
+  if (isSupabaseConfigured && newQuestions.length > 0) {
+    try {
+      const { error } = await supabase.from(SUPABASE_TABLES.QUESTIONS).upsert(newQuestions, { onConflict: 'ID' });
+      if (!error) {
+        await logActivity(auth.user.ID, 'BULK_SAVE_QUESTIONS', `${newQuestions.length} butir soal`);
+      } else {
+        console.warn('bulkSaveQuestions Supabase error:', error);
+      }
+    } catch (err) {
+      console.warn('bulkSaveQuestions Supabase error, fallback local:', err);
+    }
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('cbt:datachange', { detail: { entity: 'QUESTIONS', count: newQuestions.length } }));
+  }
+  return localSaved;
+}
+
+/**
+ * Reset Sesi Ujian Siswa (Jawaban Tidak Hilang)
+ */
+export async function resetStudentAttempt(token: string, attemptId: string) {
+  const res = localStore.resetStudentAttempt(token, attemptId);
+  if (isSupabaseConfigured && res.attempt) {
+    try {
+      await supabase.from(SUPABASE_TABLES.ATTEMPTS).update({
+        STATUS: 'IN_PROGRESS',
+        VIOLATIONS: 0,
+        SUBMITTED_AT: null,
+        SCORE: null,
+        LAST_ACTIVITY: new Date().toISOString(),
+        data: {
+          USER_ID: res.attempt.USER_ID,
+          ANSWERS_JSON: res.attempt.ANSWERS_JSON || '{}',
+          VIOLATIONS: 0,
+          PROGRESS: res.attempt.PROGRESS || 0,
+          LAST_ACTIVITY: new Date().toISOString()
+        }
+      }).eq('ID', attemptId);
+    } catch (err) {
+      console.warn('resetStudentAttempt Supabase update error:', err);
+    }
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('cbt:datachange', { detail: { entity: 'ATTEMPTS', id: attemptId } }));
+  }
+  return res;
+}
+
+export async function getAttemptsForExam(token: string, examId: string) {
+  return localStore.getAttemptsForExam(token, examId);
+}
+
+export async function resetAllStudentAttemptsForExam(token: string, examId: string) {
+  const res = localStore.resetAllStudentAttemptsForExam(token, examId);
+  if (isSupabaseConfigured) {
+    try {
+      await supabase.from(SUPABASE_TABLES.ATTEMPTS).update({
+        STATUS: 'IN_PROGRESS',
+        VIOLATIONS: 0,
+        SUBMITTED_AT: null,
+        SCORE: null,
+        LAST_ACTIVITY: new Date().toISOString()
+      }).eq('EXAM_ID', examId);
+    } catch (err) {
+      console.warn('resetAllStudentAttemptsForExam Supabase update error:', err);
+    }
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('cbt:datachange', { detail: { entity: 'ATTEMPTS' } }));
+  }
+  return res;
+}
+
+// CBT Session Presets
+export function getSessionPresets(): ExamSessionPreset[] {
+  return localStore.getSessionPresets();
+}
+
+export function saveSessionPresets(presets: ExamSessionPreset[]): ExamSessionPreset[] {
+  return localStore.saveSessionPresets(presets);
+}
+
+export function resetSessionPresets(): ExamSessionPreset[] {
+  return localStore.resetSessionPresets();
+}
+
+// CBT Student Daily Attendance & Integrity
+export function getDailyAttendanceCode(dateStr?: string): string {
+  return localStore.getDailyAttendanceCode(dateStr);
+}
+
+export function setDailyAttendanceCode(dateStr: string, code: string): string {
+  return localStore.setDailyAttendanceCode(dateStr, code);
+}
+
+export function getStudentAttendanceRecords(dateStr?: string): StudentAttendanceRecord[] {
+  return localStore.getStudentAttendanceRecords(dateStr);
+}
+
+export function getStudentAttendanceForUser(userId?: string, dateStr?: string): StudentAttendanceRecord | undefined {
+  if (!userId) return undefined;
+  return localStore.getStudentAttendanceForUser(userId, dateStr);
+}
+
+export function recordStudentAttendance(
+  userId: string,
+  dateStr: string,
+  status: AttendanceStatus,
+  method: 'QR_SCAN' | 'CODE_INPUT' | 'MANUAL_SUPERVISOR' | 'REMOTE_PERMIT',
+  verifiedBy?: string,
+  notes?: string
+): StudentAttendanceRecord {
+  return localStore.recordStudentAttendance(userId, dateStr, status, method, verifiedBy, notes);
+}
+
+export function bulkRecordAttendance(
+  userIds: string[],
+  dateStr: string,
+  status: AttendanceStatus,
+  verifiedBy?: string
+): number {
+  return localStore.bulkRecordAttendance(userIds, dateStr, status, verifiedBy);
+}
+
+export function verifyStudentAttendanceCode(
+  userId: string,
+  rawInput: string,
+  dateStr?: string
+) {
+  return localStore.verifyStudentAttendanceCode(userId, rawInput, dateStr);
+}
+
+export function getQuestionBanks() {
+  return localStore.getQuestionBanks();
+}
+
+export function saveQuestionBank(pkg: any) {
+  return localStore.saveQuestionBank(pkg);
+}
+
+export function deleteQuestionBank(id: string) {
+  return localStore.deleteQuestionBank(id);
+}
+
+
+

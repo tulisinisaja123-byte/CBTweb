@@ -13,6 +13,9 @@ export default defineConfig(() => {
       dedupe: ['react', 'react-dom'],
     },
     server: {
+      host: '0.0.0.0',
+      port: 3000,
+      allowedHosts: true,
       cors: true,
       headers: {
         'Access-Control-Allow-Origin': '*',

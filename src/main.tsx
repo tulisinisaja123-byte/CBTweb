@@ -3,6 +3,7 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
+import 'katex/dist/katex.min.css';
 
 // Guard against unhandled cross-origin noise in iframe environment
 window.onerror = function () {

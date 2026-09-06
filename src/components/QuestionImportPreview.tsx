@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { Exam, QuestionType } from '../types';
 import { parseMatchingDetails } from '../utils/matchingHelper';
+import { RichContentRenderer } from './RichContentRenderer';
 
 export interface ParsedQuestionItem {
   ID?: string;
@@ -520,9 +521,9 @@ export const QuestionImportPreview: React.FC<QuestionImportPreviewProps> = ({
                       {/* Question Text */}
                       <td className="py-3 px-3 align-top">
                         <div className="space-y-1 max-w-md">
-                          <div
-                            className="font-medium line-clamp-3 text-[#1A1C1E] leading-relaxed break-words"
-                            dangerouslySetInnerHTML={{ __html: q.QUESTION }}
+                          <RichContentRenderer
+                            content={q.QUESTION}
+                            className="font-medium line-clamp-3 text-[#1A1C1E] leading-relaxed break-words [&_img]:max-h-16 [&_img]:max-w-[120px]"
                           />
                           {hasWarning && (
                             <div className="flex items-center gap-1 text-[10px] text-[#C5221F] font-semibold">
@@ -536,82 +537,34 @@ export const QuestionImportPreview: React.FC<QuestionImportPreviewProps> = ({
                       {/* Options A - E */}
                       <td className="py-3 px-3 align-top">
                         {q.TYPE === 'MCQ' || q.TYPE === 'COMPLEX_MCQ' ? (
-                          <div className="space-y-1 text-[11px]">
-                            {q.OPTION_A && (
-                              <div
-                                className={`flex items-start gap-1 rounded px-1.5 py-0.5 ${
-                                  isOptionSelected('A', q.ANSWER, q.TYPE)
-                                    ? 'bg-[#E6F4EA] text-[#137333] font-bold border border-[#CEEAD6]'
-                                    : 'text-[#495057]'
-                                }`}
-                              >
-                                <span className="font-semibold shrink-0">A.</span>
-                                <span className="truncate">{q.OPTION_A}</span>
-                                {isOptionSelected('A', q.ANSWER, q.TYPE) && (
-                                  <Check className="w-3 h-3 ml-auto text-[#137333] shrink-0" />
-                                )}
-                              </div>
-                            )}
-                            {q.OPTION_B && (
-                              <div
-                                className={`flex items-start gap-1 rounded px-1.5 py-0.5 ${
-                                  isOptionSelected('B', q.ANSWER, q.TYPE)
-                                    ? 'bg-[#E6F4EA] text-[#137333] font-bold border border-[#CEEAD6]'
-                                    : 'text-[#495057]'
-                                }`}
-                              >
-                                <span className="font-semibold shrink-0">B.</span>
-                                <span className="truncate">{q.OPTION_B}</span>
-                                {isOptionSelected('B', q.ANSWER, q.TYPE) && (
-                                  <Check className="w-3 h-3 ml-auto text-[#137333] shrink-0" />
-                                )}
-                              </div>
-                            )}
-                            {q.OPTION_C && (
-                              <div
-                                className={`flex items-start gap-1 rounded px-1.5 py-0.5 ${
-                                  isOptionSelected('C', q.ANSWER, q.TYPE)
-                                    ? 'bg-[#E6F4EA] text-[#137333] font-bold border border-[#CEEAD6]'
-                                    : 'text-[#495057]'
-                                }`}
-                              >
-                                <span className="font-semibold shrink-0">C.</span>
-                                <span className="truncate">{q.OPTION_C}</span>
-                                {isOptionSelected('C', q.ANSWER, q.TYPE) && (
-                                  <Check className="w-3 h-3 ml-auto text-[#137333] shrink-0" />
-                                )}
-                              </div>
-                            )}
-                            {q.OPTION_D && (
-                              <div
-                                className={`flex items-start gap-1 rounded px-1.5 py-0.5 ${
-                                  isOptionSelected('D', q.ANSWER, q.TYPE)
-                                    ? 'bg-[#E6F4EA] text-[#137333] font-bold border border-[#CEEAD6]'
-                                    : 'text-[#495057]'
-                                }`}
-                              >
-                                <span className="font-semibold shrink-0">D.</span>
-                                <span className="truncate">{q.OPTION_D}</span>
-                                {isOptionSelected('D', q.ANSWER, q.TYPE) && (
-                                  <Check className="w-3 h-3 ml-auto text-[#137333] shrink-0" />
-                                )}
-                              </div>
-                            )}
-                            {q.OPTION_E && (
-                              <div
-                                className={`flex items-start gap-1 rounded px-1.5 py-0.5 ${
-                                  isOptionSelected('E', q.ANSWER, q.TYPE)
-                                    ? 'bg-[#E6F4EA] text-[#137333] font-bold border border-[#CEEAD6]'
-                                    : 'text-[#495057]'
-                                }`}
-                              >
-                                <span className="font-semibold shrink-0">E.</span>
-                                <span className="truncate">{q.OPTION_E}</span>
-                                {isOptionSelected('E', q.ANSWER, q.TYPE) && (
-                                  <Check className="w-3 h-3 ml-auto text-[#137333] shrink-0" />
-                                )}
-                              </div>
-                            )}
+                          <div className="space-y-1 text-[11px] max-w-[280px]">
+                            {(['A', 'B', 'C', 'D', 'E'] as const).map(letter => {
+                              const val = q[`OPTION_${letter}` as keyof ParsedQuestionItem] as string | undefined;
+                              if (!val) return null;
+                              const isSelected = isOptionSelected(letter, q.ANSWER, q.TYPE);
+                              return (
+                                <div
+                                  key={letter}
+                                  className={`flex items-start gap-1.5 rounded px-1.5 py-0.5 ${
+                                    isSelected
+                                      ? 'bg-[#E6F4EA] text-[#137333] font-bold border border-[#CEEAD6]'
+                                      : 'text-[#495057]'
+                                  }`}
+                                >
+                                  <span className="font-semibold shrink-0">{letter}.</span>
+                                  <div className="flex-1 min-w-0">
+                                    <RichContentRenderer
+                                      content={val}
+                                      inline
+                                      className="[&_img]:max-h-10 [&_img]:max-w-[100px] [&_img]:inline-block"
+                                    />
+                                  </div>
+                                  {isSelected && (
+                                    <Check className="w-3 h-3 ml-auto text-[#137333] shrink-0" />
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         ) : q.TYPE === 'TRUE_FALSE' ? (
                           <div className="flex items-center gap-1.5 text-[11px]">
@@ -649,13 +602,19 @@ export const QuestionImportPreview: React.FC<QuestionImportPreviewProps> = ({
                                     const pairedKey = details.correctPairs[item.key];
                                     const pairedRight = details.rightItems.find(r => r.key === pairedKey);
                                     return (
-                                      <div key={item.key} className="flex items-center gap-1.5 text-[10px] leading-tight">
-                                        <span className="px-1.5 py-0.5 rounded bg-[#E8F0FE] text-[#1967D2] font-bold shrink-0">
-                                          {item.key}. {item.text}
+                                      <div key={item.key} className="flex items-center gap-1.5 text-[10px] leading-tight flex-wrap py-0.5">
+                                        <span className="px-1.5 py-0.5 rounded bg-[#E8F0FE] text-[#1967D2] font-bold inline-flex items-center gap-1">
+                                          <span>{item.key}.</span>
+                                          <RichContentRenderer content={item.text} inline />
                                         </span>
                                         <span className="text-[#6C757D] font-bold shrink-0">➔</span>
-                                        <span className={`px-1.5 py-0.5 rounded font-bold truncate max-w-[150px] ${pairedKey ? 'bg-[#E6F4EA] text-[#137333] border border-[#CEEAD6]' : 'bg-[#F1F3F4] text-[#70757A]'}`}>
-                                          {pairedKey ? `${pairedKey}. ${pairedRight ? pairedRight.text : ''}` : '(Belum ada)'}
+                                        <span className={`px-1.5 py-0.5 rounded font-bold inline-flex items-center gap-1 ${pairedKey ? 'bg-[#E6F4EA] text-[#137333] border border-[#CEEAD6]' : 'bg-[#F1F3F4] text-[#70757A]'}`}>
+                                          {pairedKey ? (
+                                            <>
+                                              <span>{pairedKey}.</span>
+                                              <RichContentRenderer content={pairedRight ? pairedRight.text : ''} inline />
+                                            </>
+                                          ) : '(Belum ada)'}
                                         </span>
                                       </div>
                                     );
@@ -819,10 +778,9 @@ export const QuestionImportPreview: React.FC<QuestionImportPreviewProps> = ({
               </div>
 
               {/* Question Body */}
-              <div
-                className="text-sm font-medium text-[#1A1C1E] leading-relaxed break-words"
-                dangerouslySetInnerHTML={{ __html: inspectedQuestion.QUESTION }}
-              />
+              <div className="text-sm font-medium text-[#1A1C1E] leading-relaxed break-words">
+                <RichContentRenderer content={inspectedQuestion.QUESTION} />
+              </div>
 
               {/* Options */}
               {(inspectedQuestion.TYPE === 'MCQ' || inspectedQuestion.TYPE === 'COMPLEX_MCQ') && (
@@ -859,7 +817,13 @@ export const QuestionImportPreview: React.FC<QuestionImportPreviewProps> = ({
                           >
                             {opt.key}
                           </span>
-                          <span className="pt-0.5 flex-1">{opt.text}</span>
+                          <div className="pt-0.5 flex-1 min-w-0">
+                            <RichContentRenderer
+                              content={opt.text!}
+                              inline
+                              className="[&_img]:max-h-48 [&_img]:max-w-full text-xs sm:text-sm"
+                            />
+                          </div>
                           {isCorrect && (
                             <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-white text-[#137333] border border-[#34A853] shrink-0">
                               KUNCI BENAR
@@ -907,15 +871,21 @@ export const QuestionImportPreview: React.FC<QuestionImportPreviewProps> = ({
                               <span className="w-6 h-6 rounded-full bg-[#E8F0FE] text-[#0052CC] font-bold text-xs inline-flex items-center justify-center shrink-0">
                                 {idx + 1}
                               </span>
-                              <span className="font-medium text-[#1A1C1E]">{item.text}</span>
+                              <div className="font-medium text-[#1A1C1E]">
+                                <RichContentRenderer content={item.text} inline />
+                              </div>
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
                               <span className="text-xs text-[#6C757D] font-bold">➔ Kunci:</span>
-                              <div className="px-2.5 py-1 rounded-md text-xs font-bold border border-[#34A853] bg-[#E6F4EA] text-[#137333] flex items-center gap-1.5">
+                              <div className="px-2.5 py-1 rounded-md text-xs font-bold border border-[#34A853] bg-[#E6F4EA] text-[#137333] flex items-center gap-1.5 flex-wrap">
                                 <span className="w-4 h-4 rounded-full bg-[#34A853] text-white text-[10px] inline-flex items-center justify-center font-bold">
                                   {matchedKey || '?'}
                                 </span>
-                                <span className="max-w-[180px] truncate">{matchedRight ? matchedRight.text : `Opsi ${matchedKey || '-'}`}</span>
+                                {matchedRight ? (
+                                  <RichContentRenderer content={matchedRight.text} inline />
+                                ) : (
+                                  <span>{`Opsi ${matchedKey || '-'}`}</span>
+                                )}
                               </div>
                             </div>
                           </div>

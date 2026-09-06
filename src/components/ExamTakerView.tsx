@@ -25,10 +25,14 @@ import {
   User as UserIcon,
   BookOpen,
   FileText,
-  AlertOctagon
+  AlertOctagon,
+  Lock,
+  LogOut,
+  KeyRound,
+  Undo2
 } from 'lucide-react';
 import { User } from '../types';
-import { saveExamProgress, recordViolation, submitExam } from '../services/supabaseLmsStorage';
+import { saveExamProgress, recordViolation, submitExam, resetStudentAttempt, login as adminVerifyLogin } from '../services/supabaseLmsStorage';
 import { initStudentExamPresence, StudentExamPresenceController } from '../services/examRealtimePresence';
 import { RichContentRenderer } from './RichContentRenderer';
 import {
@@ -116,6 +120,14 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
     type: 'warning' | 'error' | 'info' | 'success';
   } | null>(null);
 
+  // Exit & Admin Reset States
+  const [isCancelExitModalOpen, setIsCancelExitModalOpen] = useState<boolean>(false);
+  const [isAdminResetModalOpen, setIsAdminResetModalOpen] = useState<boolean>(false);
+  const [adminUsername, setAdminUsername] = useState<string>('');
+  const [adminPassword, setAdminPassword] = useState<string>('');
+  const [adminResetError, setAdminResetError] = useState<string>('');
+  const [isAdminResetting, setIsAdminResetting] = useState<boolean>(false);
+
   // Realtime Supabase Presence & Broadcast Controller Ref
   const presenceCtrlRef = useRef<StudentExamPresenceController | null>(null);
   const [supervisorAlert, setSupervisorAlert] = useState<{ message: string; teacherName: string } | null>(null);
@@ -158,6 +170,13 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
         setSubmitting(false);
         setViolations(prev => Math.max(0, prev - 1));
         triggerToast('Akses Dipulihkan', 'Pengawas telah membuka kembali akses ujian Anda. Silakan lanjutkan.', 'success');
+      },
+      onResetAttempt: () => {
+        setActiveViolationModal(null);
+        setSubmitting(false);
+        setFinishedResult(null);
+        setViolations(0);
+        triggerToast('Sesi Ujian Direset (Jawaban Tersimpan)', 'Pengawas telah me-reset sesi ujian Anda. Seluruh jawaban yang telah diisi tetap tersimpan utuh.', 'success');
       }
     });
 
@@ -500,6 +519,42 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
     }
   };
 
+  // Otorisasi Admin untuk Reset Sesi Siswa (Jika Tidak Sengaja Klik Selesai)
+  const handleAdminResetAttempt = async () => {
+    setAdminResetError('');
+    if (!adminUsername.trim() || !adminPassword.trim()) {
+      setAdminResetError('Silakan masukkan username dan password Administrator / Pengawas.');
+      return;
+    }
+
+    setIsAdminResetting(true);
+    try {
+      // 1. Verifikasi kredensial Admin / Pengawas
+      const authResult = await adminVerifyLogin(adminUsername.trim(), adminPassword.trim());
+      if (authResult.user.ROLE !== 'ADMIN' && authResult.user.ROLE !== 'TEACHER') {
+        throw new Error('Hanya akun Administrator atau Guru Pengawas yang berhak mereset sesi ujian.');
+      }
+
+      // 2. Jalankan reset sesi di storage (jawaban siswa dipertahankan secara utuh)
+      await resetStudentAttempt(authResult.token, attemptId);
+
+      // 3. Kembalikan UI ke lembar ujian aktif
+      setFinishedResult(null);
+      setIsAdminResetModalOpen(false);
+      setAdminUsername('');
+      setAdminPassword('');
+      triggerToast(
+        'Sesi Berhasil Di-reset',
+        'Sesi ujian telah diaktifkan kembali oleh Administrator. Seluruh jawaban Anda tetap tersimpan utuh dan Anda dapat melanjutkan pengerjaan.',
+        'success'
+      );
+    } catch (err: any) {
+      setAdminResetError(err.message || 'Gagal mereset sesi ujian. Periksa username dan password Anda.');
+    } finally {
+      setIsAdminResetting(false);
+    }
+  };
+
   // Statistics
   const answeredCount = useMemo(() => {
     return questions.filter((q: any) => Boolean(String(answers[q.id] || '').trim())).length;
@@ -616,15 +671,141 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onExitExam}
-            className="w-full py-3 px-6 rounded-lg bg-[#0052CC] hover:bg-[#0047B3] text-white font-semibold text-sm shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2"
-          >
-            <span>Kembali ke Halaman Siswa</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
+          <div className="space-y-3 pt-2">
+            <button
+              type="button"
+              onClick={onExitExam}
+              className="w-full py-3 px-6 rounded-xl bg-[#0052CC] hover:bg-[#0047B3] text-white font-bold text-sm shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2"
+            >
+              <span>Kembali ke Halaman Siswa</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+
+            {/* Admin-only Reset Section: for accidental submit */}
+            <div className="pt-2 border-t border-slate-200">
+              <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 text-left space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-amber-900 font-bold text-xs">
+                    <Undo2 className="w-4 h-4 text-amber-700" />
+                    <span>Tidak Sengaja Menekan Selesai?</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminResetError('');
+                      setIsAdminResetModalOpen(true);
+                    }}
+                    className="px-3 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                  >
+                    <Lock className="w-3 h-3" />
+                    <span>Reset oleh Admin</span>
+                  </button>
+                </div>
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  Hanya Administrator atau Pengawas Ruang yang dapat mengaktifkan kembali sesi ini. Seluruh jawaban Anda tetap aman dan tidak akan hilang.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
+
+        {/* Modal Otorisasi Admin untuk Reset Sesi Siswa */}
+        {isAdminResetModalOpen && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full p-6 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center">
+                    <Lock className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-bold text-slate-900 leading-tight">
+                      Otorisasi Reset Admin
+                    </h4>
+                    <p className="text-xs text-slate-500">
+                      Buka kembali lembar ujian siswa
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAdminResetModalOpen(false)}
+                  disabled={isAdminResetting}
+                  className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+                Pengawas/Admin harus memasukkan kredensial akun madrasah untuk membuka kembali sesi siswa ini. <b>Seluruh jawaban siswa tetap dipertahankan utuh.</b>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Username Admin / Guru
+                  </label>
+                  <input
+                    type="text"
+                    value={adminUsername}
+                    onChange={e => setAdminUsername(e.target.value)}
+                    placeholder="Username admin/guru"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:border-[#0052CC]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Password Admin / Guru
+                  </label>
+                  <input
+                    type="password"
+                    value={adminPassword}
+                    onChange={e => setAdminPassword(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleAdminResetAttempt();
+                    }}
+                    placeholder="Password"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:border-[#0052CC]"
+                  />
+                </div>
+
+                {adminResetError && (
+                  <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 p-2.5 rounded-xl font-medium flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>{adminResetError}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAdminResetModalOpen(false)}
+                  disabled={isAdminResetting}
+                  className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAdminResetAttempt}
+                  disabled={isAdminResetting}
+                  className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {isAdminResetting ? (
+                    <span>Memverifikasi...</span>
+                  ) : (
+                    <>
+                      <Undo2 className="w-3.5 h-3.5" />
+                      <span>Verifikasi & Buka Kembali</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -748,6 +929,17 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
             title={isFullscreen ? 'Keluar Layar Penuh' : 'Mode Layar Penuh (Fullscreen)'}
           >
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
+
+          {/* Batalkan / Keluar Sementara Button (Anti salah klik) */}
+          <button
+            type="button"
+            onClick={() => setIsCancelExitModalOpen(true)}
+            className="p-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-white/10 hover:bg-rose-500/20 text-white hover:text-rose-200 border border-white/15 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+            title="Batalkan pengerjaan atau keluar sementara tanpa menyelesaikan ujian"
+          >
+            <LogOut className="w-3.5 h-3.5 text-rose-300" />
+            <span className="hidden md:inline">Batalkan / Keluar</span>
           </button>
 
           {/* Mobile Navigation Drawer Toggle */}
@@ -968,40 +1160,115 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
                 )}
 
                 {/* 3C. BENAR / SALAH (TRUE_FALSE) */}
-                {currentQ.type === 'TRUE_FALSE' && (
-                  <div className="space-y-3 pt-2">
-                    <div className="text-xs font-bold text-[#1A1C1E]">
-                      Tentukan kebenaran dari pernyataan di atas:
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                      <button
-                        type="button"
-                        onClick={() => handleSelectTrueFalse(currentQ.id, 'BENAR')}
-                        className={`p-4 rounded-xl border-2 text-center font-bold text-sm flex items-center justify-center gap-3 transition-all cursor-pointer ${
-                          answers[currentQ.id]?.toUpperCase() === 'BENAR'
-                            ? 'border-[#137333] bg-[#E6F4EA] text-[#137333] shadow-xs ring-2 ring-emerald-300'
-                            : 'border-[#CED4DA] bg-white text-[#495057] hover:border-[#137333] hover:bg-[#F8F9FA]'
-                        }`}
-                      >
-                        <span className="w-7 h-7 rounded-full bg-[#137333] text-white flex items-center justify-center text-xs">✓</span>
-                        <span>BENAR (TRUE)</span>
-                      </button>
+                {currentQ.type === 'TRUE_FALSE' && (() => {
+                  let parsedExtra: any = null;
+                  if (currentQ.extraData) {
+                    try { parsedExtra = JSON.parse(currentQ.extraData); } catch {}
+                  }
+                  const isMultiStatement = parsedExtra?.mode === 'STATEMENT_EVALUATION' ||
+                    (parsedExtra?.evaluations && Object.keys(parsedExtra.evaluations).length > 0);
 
-                      <button
-                        type="button"
-                        onClick={() => handleSelectTrueFalse(currentQ.id, 'SALAH')}
-                        className={`p-4 rounded-xl border-2 text-center font-bold text-sm flex items-center justify-center gap-3 transition-all cursor-pointer ${
-                          answers[currentQ.id]?.toUpperCase() === 'SALAH'
-                            ? 'border-[#DC3545] bg-[#FCE8E6] text-[#DC3545] shadow-xs ring-2 ring-red-300'
-                            : 'border-[#CED4DA] bg-white text-[#495057] hover:border-[#DC3545] hover:bg-[#F8F9FA]'
-                        }`}
-                      >
-                        <span className="w-7 h-7 rounded-full bg-[#DC3545] text-white flex items-center justify-center text-xs">✕</span>
-                        <span>SALAH (FALSE)</span>
-                      </button>
+                  if (isMultiStatement) {
+                    const evalOptions = ['A', 'B', 'C', 'D', 'E'].filter(opt => !!currentQ.options?.[opt]);
+                    const currentAnsMap: Record<string, string> = {};
+                    (answers[currentQ.id] || '').split(/[;\n,]+/).forEach(part => {
+                      const [k, v] = part.split(':').map(x => x.trim().toUpperCase());
+                      if (k && v) currentAnsMap[k] = v;
+                    });
+
+                    const handleMultiTfChange = (opt: string, val: 'BENAR' | 'SALAH') => {
+                      const updated = { ...currentAnsMap, [opt]: val };
+                      const str = Object.entries(updated).map(([k, v]) => `${k}:${v}`).join('; ');
+                      saveAnswer(currentQ.id, str);
+                    };
+
+                    return (
+                      <div className="space-y-3 pt-2">
+                        <div className="text-xs font-bold text-[#1A1C1E]">
+                          Evaluasi setiap pernyataan berikut (Pilih Benar atau Salah):
+                        </div>
+                        <div className="space-y-2">
+                          {evalOptions.map(opt => {
+                            const optText = currentQ.options[opt];
+                            const selectedVal = currentAnsMap[opt];
+                            return (
+                              <div
+                                key={opt}
+                                className="p-3 rounded-xl border border-slate-200 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs"
+                              >
+                                <div className="flex items-start gap-2 flex-1 text-xs sm:text-sm text-slate-800">
+                                  <span className="font-bold text-[#0052CC] shrink-0">[{opt}]</span>
+                                  <div className="leading-snug">
+                                    <RichContentRenderer content={optText} inline />
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleMultiTfChange(opt, 'BENAR')}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                      selectedVal === 'BENAR'
+                                        ? 'bg-[#137333] text-white shadow-xs'
+                                        : 'bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'
+                                    }`}
+                                  >
+                                    <span>✓ Benar</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleMultiTfChange(opt, 'SALAH')}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                      selectedVal === 'SALAH'
+                                        ? 'bg-[#DC3545] text-white shadow-xs'
+                                        : 'bg-slate-100 text-slate-600 hover:bg-rose-50 hover:text-rose-700'
+                                    }`}
+                                  >
+                                    <span>✕ Salah</span>
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-3 pt-2">
+                      <div className="text-xs font-bold text-[#1A1C1E]">
+                        Tentukan kebenaran dari pernyataan di atas:
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectTrueFalse(currentQ.id, 'BENAR')}
+                          className={`p-4 rounded-xl border-2 text-center font-bold text-sm flex items-center justify-center gap-3 transition-all cursor-pointer ${
+                            answers[currentQ.id]?.toUpperCase() === 'BENAR'
+                              ? 'border-[#137333] bg-[#E6F4EA] text-[#137333] shadow-xs ring-2 ring-emerald-300'
+                              : 'border-[#CED4DA] bg-white text-[#495057] hover:border-[#137333] hover:bg-[#F8F9FA]'
+                          }`}
+                        >
+                          <span className="w-7 h-7 rounded-full bg-[#137333] text-white flex items-center justify-center text-xs">✓</span>
+                          <span>BENAR (TRUE)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleSelectTrueFalse(currentQ.id, 'SALAH')}
+                          className={`p-4 rounded-xl border-2 text-center font-bold text-sm flex items-center justify-center gap-3 transition-all cursor-pointer ${
+                            answers[currentQ.id]?.toUpperCase() === 'SALAH'
+                              ? 'border-[#DC3545] bg-[#FCE8E6] text-[#DC3545] shadow-xs ring-2 ring-red-300'
+                              : 'border-[#CED4DA] bg-white text-[#495057] hover:border-[#DC3545] hover:bg-[#F8F9FA]'
+                          }`}
+                        >
+                          <span className="w-7 h-7 rounded-full bg-[#DC3545] text-white flex items-center justify-center text-xs">✕</span>
+                          <span>SALAH (FALSE)</span>
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* 3D. MENJODOHKAN (MATCHING) */}
                 {currentQ.type === 'MATCHING' && (() => {
@@ -1042,7 +1309,9 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
                                 <span className="w-5 h-5 rounded bg-[#1A1C1E] text-white font-bold text-[10px] inline-flex items-center justify-center shrink-0">
                                   {r.key}
                                 </span>
-                                <span className="text-[#1A1C1E] font-medium leading-snug">{r.text}</span>
+                                <div className="text-[#1A1C1E] font-medium leading-snug flex-1">
+                                  <RichContentRenderer content={r.text} inline />
+                                </div>
                               </div>
                             ))}
                           </div>
@@ -1073,7 +1342,9 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
                                   <span className="w-6 h-6 rounded-full bg-[#E8F0FE] text-[#0052CC] font-bold text-xs inline-flex items-center justify-center shrink-0 mt-0.5">
                                     {idx + 1}
                                   </span>
-                                  <span className="leading-snug pt-0.5">{leftItem.text}</span>
+                                  <div className="leading-snug pt-0.5 flex-1">
+                                    <RichContentRenderer content={leftItem.text} inline />
+                                  </div>
                                 </div>
 
                                 <div className="flex items-center gap-2 shrink-0">
@@ -1090,7 +1361,7 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
                                     <option value="">-- Pilih Pasangan --</option>
                                     {details.rightItems.map(r => (
                                       <option key={r.key} value={r.key}>
-                                        {r.key}. {r.text}
+                                        {r.key}. {r.text.replace(/\$+/g, '')}
                                       </option>
                                     ))}
                                   </select>
@@ -1098,10 +1369,11 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
                               </div>
 
                               {matchedRightObj && (
-                                <div className="mt-2.5 pt-2 border-t border-[#D0E2FF] flex items-center gap-1.5 text-[11px] text-[#0052CC]">
+                                <div className="mt-2.5 pt-2 border-t border-[#D0E2FF] flex items-center gap-1.5 text-[11px] text-[#0052CC] flex-wrap">
                                   <span className="font-semibold">Dipasangkan dengan:</span>
-                                  <span className="px-2 py-0.5 rounded bg-white font-bold border border-[#B3D1FF]">
-                                    {matchedRightObj.key}. {matchedRightObj.text}
+                                  <span className="px-2 py-0.5 rounded bg-white font-bold border border-[#B3D1FF] inline-flex items-center gap-1">
+                                    <span>{matchedRightObj.key}.</span>
+                                    <RichContentRenderer content={matchedRightObj.text} inline />
                                   </span>
                                 </div>
                               )}
@@ -1643,6 +1915,64 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal Batalkan / Keluar Sementara dari Ujian (Anti salah klik) */}
+      {isCancelExitModalOpen && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl border border-slate-200 space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 leading-tight">
+                  Batalkan Pengerjaan / Keluar?
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Konfirmasi keluar lembar ujian
+                </p>
+              </div>
+            </div>
+
+            <div className="text-xs text-slate-600 bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 space-y-1.5 leading-relaxed">
+              <p>
+                Jika Anda tidak sengaja membuka ujian atau perlu keluar sementara:
+              </p>
+              <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-700">
+                <li>Seluruh jawaban yang telah Anda isi <b>tetap tersimpan aman</b>.</li>
+                <li>Ujian <b>BELUM</b> diselesaikan secara final.</li>
+                <li>Anda dapat melanjutkan kembali selama jadwal ujian masih dibuka.</li>
+              </ul>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsCancelExitModalOpen(false)}
+                className="px-4 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                Lanjutkan Mengerjakan
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const answeredCount = Object.keys(answers).length;
+                    const progress = questions.length > 0 ? Math.round((answeredCount / questions.length) * 100) : 0;
+                    await saveExamProgress(token, attemptId, answers, progress, violations);
+                  } catch {}
+                  setIsCancelExitModalOpen(false);
+                  onExitExam();
+                }}
+                className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Simpan & Keluar ke Dashboard</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

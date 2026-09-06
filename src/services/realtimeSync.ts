@@ -28,15 +28,32 @@ let statusState: RealtimeSyncStatus = {
 
 let broadcastChannelInstance: BroadcastChannel | null = null;
 let syncingTimeout: any = null;
+let isNotifyPending = false;
+
+function deferTask(fn: () => void) {
+  if (typeof queueMicrotask === 'function') {
+    queueMicrotask(fn);
+  } else if (typeof Promise !== 'undefined') {
+    Promise.resolve().then(fn);
+  } else {
+    setTimeout(fn, 0);
+  }
+}
 
 function notifyStatusListeners() {
-  const currentSnapshot = { ...statusState };
-  listeners.forEach(fn => {
-    try {
-      fn(currentSnapshot);
-    } catch (e) {
-      console.error('Realtime listener error:', e);
-    }
+  if (isNotifyPending) return;
+  isNotifyPending = true;
+
+  deferTask(() => {
+    isNotifyPending = false;
+    const currentSnapshot = { ...statusState };
+    listeners.forEach(fn => {
+      try {
+        fn(currentSnapshot);
+      } catch (e) {
+        console.error('Realtime listener error:', e);
+      }
+    });
   });
 }
 
@@ -124,7 +141,11 @@ export function getRealtimeStatus(): RealtimeSyncStatus {
 
 export function subscribeToRealtimeStatus(listener: RealtimeListener): () => void {
   listeners.add(listener);
-  listener({ ...statusState });
+  deferTask(() => {
+    if (listeners.has(listener)) {
+      listener({ ...statusState });
+    }
+  });
   return () => {
     listeners.delete(listener);
   };

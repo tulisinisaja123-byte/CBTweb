@@ -80,9 +80,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { section: 'CETAK DOKUMEN' },
     { id: 'printCards', label: 'Kartu Peserta', icon: CreditCard },
     { id: 'printAttendance', label: 'Daftar Hadir', icon: FileSpreadsheet },
-    { id: 'printMinutes', label: 'Berita Acara', icon: FileText },
-    { section: 'PANDUAN & ALUR' },
-    { id: 'workflowGuide', label: 'Langkah Pengerjaan', icon: Compass }
+    { id: 'printMinutes', label: 'Berita Acara', icon: FileText }
   ];
 
   const menuTeacher = [
@@ -112,16 +110,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const menuStudent = [
     { section: 'MENU UTAMA' },
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { section: 'UJIAN SAYA' },
-    { id: 'availableExams', label: 'Daftar Ujian', icon: BookMarked },
+    { id: 'dashboard', label: 'Dashboard Siswa', icon: LayoutDashboard },
+    { section: 'JADWAL & UJIAN CBT' },
+    { id: 'availableExams', label: 'Jadwal Ujian Mapel', icon: Calendar },
+    { id: 'printCards', label: 'Kartu Peserta Ujian', icon: CreditCard },
     { id: 'examRoom', label: 'Ruang Ujian', icon: MonitorPlay },
-    { id: 'myResults', label: 'Hasil Ujian', icon: ClipboardCheck },
-    { section: 'AKADEMIK & JADWAL' },
-    { id: 'timetable', label: 'Jadwal Pelajaran', icon: CalendarDays },
+    { id: 'myResults', label: 'Hasil Nilai Ujian', icon: ClipboardCheck },
     { section: 'AKUN & PANDUAN' },
     { id: 'profile', label: 'Profil & Password', icon: UserCog },
-    { id: 'workflowGuide', label: 'Panduan Ujian', icon: Compass }
+    { id: 'workflowGuide', label: 'Langkah Pengerjaan', icon: Compass }
   ];
 
   const menu = isStudent ? menuStudent : isTeacher ? menuTeacher : menuAdmin;

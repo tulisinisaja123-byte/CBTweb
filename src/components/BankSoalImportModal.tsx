@@ -30,7 +30,9 @@ import {
 } from 'lucide-react';
 import { Exam, QuestionType } from '../types';
 import { downloadQuestionsWordTemplate } from '../utils/wordTemplates';
-import { downloadQuestionsTemplate } from '../utils/excelTemplates';
+import { downloadQuestionsTemplate, downloadQuestionsSingleColumnTemplate } from '../utils/excelTemplates';
+import { parseQuestionsFromWord, normalizeQuestionType } from '../utils/wordParser';
+import { parseExcelQuestionRows } from '../utils/excelQuestionParser';
 import { RichContentRenderer } from './RichContentRenderer';
 
 // ----------------------------------------------------
@@ -62,19 +64,6 @@ export interface BankSoalImportModalProps {
   onSelectedExamChange?: (examId: string) => void;
   onSaveToBankSoal?: (questions: BankSoalItemJSON[], targetExamId: string) => Promise<void> | void;
   teacherName?: string;
-}
-
-/**
- * Normalisasi tipe soal dari string teks dokumen / spreadsheet
- */
-export function normalizeQuestionType(rawType: string): QuestionType {
-  const norm = String(rawType || '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_');
-  if (norm.includes('KOMPLEKS') || norm.includes('COMPLEX')) return 'COMPLEX_MCQ';
-  if (norm.includes('BENAR') || norm.includes('SALAH') || norm === 'BS' || norm === 'B_S' || norm === 'TRUE_FALSE') return 'TRUE_FALSE';
-  if (norm.includes('JODOH') || norm.includes('COCOK') || norm.includes('MATCH')) return 'MATCHING';
-  if (norm.includes('ISIAN') || norm.includes('SINGKAT') || norm.includes('SHORT')) return 'SHORT_ANSWER';
-  if (norm.includes('ESAI') || norm.includes('URAIAN') || norm.includes('ESSAY')) return 'ESSAY';
-  return 'MCQ';
 }
 
 /**
@@ -123,201 +112,34 @@ export function validateBankSoalItem(item: BankSoalItemJSON): string[] {
 }
 
 // ----------------------------------------------------
-// 1. FUNGSI PARSING FILE WORD (.docx) DENGAN MAMMOTH
+// 1. FUNGSI PARSING FILE WORD (.docx) DENGAN MAMMOTH (DELEGATED TO WORDPARSER)
 // ----------------------------------------------------
 export async function parseBankSoalFromWord(file: File): Promise<BankSoalItemJSON[]> {
-  const arrayBuffer = await file.arrayBuffer();
+  const wordQuestions = await parseQuestionsFromWord(file, '');
+  return wordQuestions.map((q, idx) => {
+    const pilihan: Record<string, string> = {};
+    if (q.OPTION_A) pilihan.A = q.OPTION_A;
+    if (q.OPTION_B) pilihan.B = q.OPTION_B;
+    if (q.OPTION_C) pilihan.C = q.OPTION_C;
+    if (q.OPTION_D) pilihan.D = q.OPTION_D;
+    if (q.OPTION_E) pilihan.E = q.OPTION_E;
 
-  // Ekstraksi HTML dengan dukungan konversi gambar menjadi base64 inline
-  const mammothAny = mammoth as any;
-  let html = '';
-  try {
-    const result = await mammothAny.convertToHtml(
-      { arrayBuffer },
-      {
-        convertImage: mammothAny.images?.imgElement?.((image: any) => {
-          return image.read('base64').then((imageBuffer: string) => {
-            return {
-              src: `data:${image.contentType};base64,${imageBuffer}`
-            };
-          });
-        })
-      }
-    );
-    html = result.value || '';
-  } catch {
-    // Fallback jika convertToHtml gagal, gunakan extractRawText
-    const raw = await mammoth.extractRawText({ arrayBuffer });
-    html = `<p>${raw.value.replace(/\n/g, '</p><p>')}</p>`;
-  }
-
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-  const items: BankSoalItemJSON[] = [];
-
-  // METODE A: Periksa jika ada format TABEL naskah soal
-  const tables = Array.from(doc.querySelectorAll('table'));
-  if (tables.length > 0) {
-    tables.forEach(table => {
-      const rows = Array.from(table.querySelectorAll('tr'));
-      if (rows.length < 2) return;
-
-      const headerRow = rows[0];
-      const headers = Array.from(headerRow.querySelectorAll('th, td')).map(cell =>
-        cell.textContent?.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_') || ''
-      );
-
-      // Cari indeks kolom
-      const typeIdx = headers.findIndex(h => h.includes('TIPE') || h.includes('JENIS') || h === 'TYPE');
-      const ansIdx = headers.findIndex(h => h.includes('KUNCI') || h.includes('JAWAB') || h === 'ANSWER' || h === 'KEY');
-      const ptsIdx = headers.findIndex(h => h.includes('POIN') || h.includes('BOBOT') || h === 'SCORE' || h.includes('NILAI'));
-
-      const optAIdx = headers.findIndex(h => h === 'A' || h === 'OPSI_A' || h === 'PILIHAN_A');
-      const optBIdx = headers.findIndex(h => h === 'B' || h === 'OPSI_B' || h === 'PILIHAN_B');
-      const optCIdx = headers.findIndex(h => h === 'C' || h === 'OPSI_C' || h === 'PILIHAN_C');
-      const optDIdx = headers.findIndex(h => h === 'D' || h === 'OPSI_D' || h === 'PILIHAN_D');
-      const optEIdx = headers.findIndex(h => h === 'E' || h === 'OPSI_E' || h === 'PILIHAN_E');
-
-      const qIdx = headers.findIndex(h =>
-        h.includes('PERTANYAAN') || h.includes('SOAL') || h.includes('QUESTION') || h.includes('NASKAH')
-      );
-
-      for (let r = 1; r < rows.length; r++) {
-        const cells = Array.from(rows[r].querySelectorAll('td, th'));
-        if (cells.length < 2) continue;
-
-        const getCellHtml = (idx: number) => {
-          if (idx < 0 || idx >= cells.length) return '';
-          const cell = cells[idx];
-          const hasImg = Boolean(cell.querySelector('img'));
-          const hasFmt = Boolean(cell.querySelector('sup, sub, strong, b, em, i, u'));
-          return (hasImg || hasFmt) ? cell.innerHTML.trim() : (cell.textContent || '').trim();
-        };
-
-        const getCellText = (idx: number) => (idx >= 0 && idx < cells.length ? cells[idx].textContent?.trim() || '' : '');
-
-        const rawType = typeIdx >= 0 ? getCellText(typeIdx) : 'MCQ';
-        const finalType = normalizeQuestionType(rawType);
-        const questionText = qIdx >= 0 ? getCellHtml(qIdx) : getCellHtml(1);
-        const answerText = ansIdx >= 0 ? getCellText(ansIdx) : '';
-        const ptsRaw = ptsIdx >= 0 ? getCellText(ptsIdx) : '10';
-        const pts = parseInt(ptsRaw.replace(/[^0-9]/g, ''), 10) || 10;
-
-        if (!questionText && !answerText) continue;
-
-        const pilihan: Record<string, string> = {};
-        if (optAIdx >= 0) pilihan.A = getCellHtml(optAIdx);
-        if (optBIdx >= 0) pilihan.B = getCellHtml(optBIdx);
-        if (optCIdx >= 0) pilihan.C = getCellHtml(optCIdx);
-        if (optDIdx >= 0) pilihan.D = getCellHtml(optDIdx);
-        if (optEIdx >= 0) pilihan.E = getCellHtml(optEIdx);
-
-        const bankItem: BankSoalItemJSON = {
-          id: `WS-${Date.now()}-${items.length + 1}`,
-          soal: questionText,
-          tipe: finalType,
-          pilihan_jawaban: pilihan,
-          kunci_jawaban: answerText,
-          bobot: pts
-        };
-        bankItem.warnings = validateBankSoalItem(bankItem);
-        items.push(bankItem);
-      }
-    });
-  }
-
-  // METODE B: Jika tabel tidak menghasilkan butir soal, baca teks paragraf terstruktur
-  if (items.length === 0) {
-    const paragraphs = Array.from(doc.querySelectorAll('p, div, li'))
-      .map(el => {
-        const hasImg = Boolean(el.querySelector('img'));
-        const text = el.textContent?.trim() || '';
-        const htmlContent = hasImg ? el.innerHTML.trim() : text;
-        return { text, html: htmlContent };
-      })
-      .filter(p => p.text.length > 0 || p.html.includes('<img'));
-
-    let currentItem: Partial<BankSoalItemJSON> | null = null;
-
-    const finalizeItem = () => {
-      if (currentItem && currentItem.soal) {
-        const completeItem: BankSoalItemJSON = {
-          id: `WP-${Date.now()}-${items.length + 1}`,
-          soal: currentItem.soal || '',
-          tipe: currentItem.tipe || 'MCQ',
-          pilihan_jawaban: currentItem.pilihan_jawaban || {},
-          kunci_jawaban: currentItem.kunci_jawaban || '',
-          bobot: currentItem.bobot || 10
-        };
-        completeItem.warnings = validateBankSoalItem(completeItem);
-        items.push(completeItem);
-      }
-      currentItem = null;
+    const item: BankSoalItemJSON = {
+      id: q.ID || `WS-${Date.now()}-${idx + 1}`,
+      soal: q.QUESTION,
+      tipe: q.TYPE,
+      pilihan_jawaban: pilihan,
+      kunci_jawaban: q.ANSWER,
+      bobot: q.POINTS || 10,
+      extra_data: q.EXTRA_DATA
     };
-
-    for (const p of paragraphs) {
-      const trimmed = p.text.trim();
-
-      // Deteksi nomor awal soal: 1. / 1) / Soal 1:
-      const questionMatch = trimmed.match(/^(?:Soal\s*)?(\d+)[\.\)]\s*(.*)/i);
-      if (questionMatch && !trimmed.match(/^[A-E][\.\)]/i)) {
-        finalizeItem();
-        currentItem = {
-          soal: p.html.replace(/^(?:Soal\s*)?\d+[\.\)]\s*/i, ''),
-          tipe: 'MCQ',
-          pilihan_jawaban: {},
-          kunci_jawaban: '',
-          bobot: 10
-        };
-        continue;
-      }
-
-      if (!currentItem) continue;
-
-      // Deteksi Kunci Jawaban
-      const keyMatch = trimmed.match(/^(?:Kunci(?:\s*Jawaban)?|Jawaban|Answer|Key)\s*[:=]\s*(.+)/i);
-      if (keyMatch) {
-        currentItem.kunci_jawaban = keyMatch[1].trim();
-        continue;
-      }
-
-      // Deteksi Bobot / Poin
-      const ptsMatch = trimmed.match(/^(?:Bobot|Poin|Score|Points)\s*[:=]\s*(\d+)/i);
-      if (ptsMatch) {
-        currentItem.bobot = parseInt(ptsMatch[1], 10) || 10;
-        continue;
-      }
-
-      // Deteksi Tipe Soal
-      const typeMatch = trimmed.match(/^(?:Tipe|Jenis|Bentuk)\s*(?:Soal)?\s*[:=]\s*(.+)/i);
-      if (typeMatch) {
-        currentItem.tipe = normalizeQuestionType(typeMatch[1]);
-        continue;
-      }
-
-      // Deteksi Opsi A, B, C, D, E
-      const optMatch = trimmed.match(/^([A-E])[\.\)]\s*(.*)/i);
-      if (optMatch) {
-        const optLetter = optMatch[1].toUpperCase();
-        const optVal = p.html.replace(/^[A-E][\.\)]\s*/i, '');
-        if (!currentItem.pilihan_jawaban) currentItem.pilihan_jawaban = {};
-        currentItem.pilihan_jawaban[optLetter] = optVal;
-        continue;
-      }
-
-      // Kalimat lanjutan dari soal
-      if (!currentItem.kunci_jawaban && Object.keys(currentItem.pilihan_jawaban || {}).length === 0) {
-        currentItem.soal += `<br/>${p.html}`;
-      }
-    }
-    finalizeItem();
-  }
-
-  return items;
+    item.warnings = validateBankSoalItem(item);
+    return item;
+  });
 }
 
 // ----------------------------------------------------
-// 2. FUNGSI PARSING FILE EXCEL (.xlsx) DENGAN XLSX
+// 2. FUNGSI PARSING FILE EXCEL (.xlsx) DENGAN XLSX (DELEGATED TO EXCELQUESTIONPARSER)
 // ----------------------------------------------------
 export async function parseBankSoalFromExcel(file: File): Promise<BankSoalItemJSON[]> {
   const arrayBuffer = await file.arrayBuffer();
@@ -332,61 +154,28 @@ export async function parseBankSoalFromExcel(file: File): Promise<BankSoalItemJS
   if (!worksheet) return [];
 
   const rawRows = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, { defval: '' });
-  const items: BankSoalItemJSON[] = [];
+  const parsedRows = parseExcelQuestionRows(rawRows, '');
 
-  rawRows.forEach((row, idx) => {
-    const entries = Object.entries(row);
-    if (entries.length === 0) return;
-
-    // Helper pencarian kolom yang fleksibel dan toleran huruf besar/kecil
-    const findVal = (...keys: string[]): string => {
-      for (const k of keys) {
-        const cleanTarget = k.toUpperCase().replace(/[^A-Z0-9]/g, '');
-        for (const [rKey, rVal] of entries) {
-          const cleanRowKey = rKey.toUpperCase().replace(/[^A-Z0-9]/g, '');
-          if (cleanRowKey === cleanTarget || (cleanTarget.length >= 4 && cleanRowKey.includes(cleanTarget))) {
-            return String(rVal ?? '').trim();
-          }
-        }
-      }
-      return '';
-    };
-
-    const soalText = findVal('PERTANYAAN', 'SOAL', 'QUESTION', 'NASKAH_SOAL', 'ISI_SOAL', 'TEKS_SOAL');
-    const rawType = findVal('TIPE_SOAL', 'TIPESOAL', 'JENIS_SOAL', 'JENISSOAL', 'TIPE', 'TYPE', 'BENTUK');
-    const finalType = normalizeQuestionType(rawType);
-    const kunci = findVal('KUNCI_JAWABAN', 'KUNCIJAWABAN', 'KUNCI', 'JAWABAN', 'ANSWER', 'KEY');
-    const bobotRaw = findVal('BOBOT_POIN', 'BOBOTPOIN', 'BOBOT', 'POIN', 'POINT', 'SCORE', 'NILAI');
-    const bobot = parseInt(bobotRaw.replace(/[^0-9]/g, ''), 10) || 10;
-
-    const optA = findVal('OPSI_A', 'OPSIA', 'PILIHAN_A', 'A');
-    const optB = findVal('OPSI_B', 'OPSIB', 'PILIHAN_B', 'B');
-    const optC = findVal('OPSI_C', 'OPSIC', 'PILIHAN_C', 'C');
-    const optD = findVal('OPSI_D', 'OPSID', 'PILIHAN_D', 'D');
-    const optE = findVal('OPSI_E', 'OPSIE', 'PILIHAN_E', 'E');
-
-    if (!soalText && !kunci && !optA) return;
-
+  return parsedRows.map((q, idx) => {
     const pilihan: Record<string, string> = {};
-    if (optA) pilihan.A = optA;
-    if (optB) pilihan.B = optB;
-    if (optC) pilihan.C = optC;
-    if (optD) pilihan.D = optD;
-    if (optE) pilihan.E = optE;
+    if (q.OPTION_A) pilihan.A = q.OPTION_A;
+    if (q.OPTION_B) pilihan.B = q.OPTION_B;
+    if (q.OPTION_C) pilihan.C = q.OPTION_C;
+    if (q.OPTION_D) pilihan.D = q.OPTION_D;
+    if (q.OPTION_E) pilihan.E = q.OPTION_E;
 
     const item: BankSoalItemJSON = {
-      id: `EX-${Date.now()}-${idx + 1}`,
-      soal: soalText,
-      tipe: finalType,
+      id: q.ID || `EX-${Date.now()}-${idx + 1}`,
+      soal: q.QUESTION,
+      tipe: q.TYPE,
       pilihan_jawaban: pilihan,
-      kunci_jawaban: kunci,
-      bobot: bobot
+      kunci_jawaban: q.ANSWER,
+      bobot: q.POINTS || 10,
+      extra_data: q.EXTRA_DATA
     };
     item.warnings = validateBankSoalItem(item);
-    items.push(item);
+    return item;
   });
-
-  return items;
 }
 
 // ----------------------------------------------------
@@ -755,7 +544,7 @@ export const BankSoalImportModal: React.FC<BankSoalImportModalProps> = ({
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => downloadQuestionsWordTemplate()}
@@ -769,9 +558,20 @@ export const BankSoalImportModal: React.FC<BankSoalImportModalProps> = ({
                       type="button"
                       onClick={() => downloadQuestionsTemplate(exams, targetExam)}
                       className="px-3 py-1.5 rounded-lg bg-[#137333] hover:bg-[#0E5827] text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                      title="Format standar dengan kolom OPSI_A, OPSI_B, OPSI_C, OPSI_D, OPSI_E terpisah"
                     >
                       <FileSpreadsheet className="w-3.5 h-3.5" />
-                      <span>Template Excel (.xlsx)</span>
+                      <span>Excel (Kolom Opsi A-E)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => downloadQuestionsSingleColumnTemplate(exams, targetExam)}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                      title="Format praktis: semua opsi jawaban digabung dalam 1 kolom OPSI_PILIHAN"
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5" />
+                      <span>Excel (1 Kolom Opsi)</span>
                     </button>
                   </div>
                 </div>
@@ -784,7 +584,7 @@ export const BankSoalImportModal: React.FC<BankSoalImportModalProps> = ({
                       <span>Format Microsoft Word (.docx):</span>
                     </div>
                     <p className="text-[10px] leading-relaxed text-[#6C757D]">
-                      Bisa menggunakan format tabel (No, Soal, Opsi A-E, Kunci, Bobot) atau penomoran berurutan (1. Soal, A. Opsi A, B. Opsi B, Kunci: A, Bobot: 10). Rumus matematika dan gambar tersimpan otomatis.
+                      Bisa menggunakan format tabel (No, Soal, Opsi A-E, Kunci, Bobot) atau penomoran naskah (1. Soal, A. Opsi A, B. Opsi B, Kunci: A, Bobot: 10). Rumus matematika dan gambar tersimpan otomatis.
                     </p>
                   </div>
 
@@ -794,7 +594,7 @@ export const BankSoalImportModal: React.FC<BankSoalImportModalProps> = ({
                       <span>Format Microsoft Excel (.xlsx):</span>
                     </div>
                     <p className="text-[10px] leading-relaxed text-[#6C757D]">
-                      Gunakan kolom: <code className="text-[#137333] font-bold">PERTANYAAN</code>, <code className="text-[#137333] font-bold">TIPE_SOAL</code> (MCQ, COMPLEX_MCQ, TRUE_FALSE, MATCHING, SHORT_ANSWER, ESSAY), <code className="text-[#137333] font-bold">OPSI_A s/d E</code>, <code className="text-[#137333] font-bold">KUNCI_JAWABAN</code>, dan <code className="text-[#137333] font-bold">BOBOT_POIN</code>.
+                      Kolom: <code className="text-[#137333] font-bold">PERTANYAAN</code>, <code className="text-[#137333] font-bold">KUNCI_JAWABAN</code>, <code className="text-[#137333] font-bold">BOBOT_POIN</code>. Opsi pilihan bisa dibuat di kolom terpisah (<code className="text-[#137333] font-bold">OPSI_A s/d E</code>) atau dijadikan satu di kolom <code className="text-[#137333] font-bold">OPSI_PILIHAN</code>.
                     </p>
                   </div>
                 </div>

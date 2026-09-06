@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   subscribeToRealtimeStatus,
   triggerManualSync,
+  getRealtimeStatus,
   RealtimeSyncStatus
 } from '../services/realtimeSync';
 import {
@@ -18,14 +19,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 export const RealtimeIndicator: React.FC = () => {
-  const [status, setStatus] = useState<RealtimeSyncStatus>({
-    isOnline: true,
-    isSyncing: false,
-    lastSyncTimestamp: Date.now(),
-    syncEventCount: 0,
-    channelName: 'cbt_realtime_sync_channel',
-    hasBroadcastSupport: true
-  });
+  const [status, setStatus] = useState<RealtimeSyncStatus>(() => getRealtimeStatus());
   const [isOpen, setIsOpen] = useState(false);
   const [timeAgo, setTimeAgo] = useState('Baru saja');
   const popoverRef = useRef<HTMLDivElement>(null);
